@@ -1,12 +1,43 @@
+# =========================
+# Dependencias
+# =========================
 node_modules/
+
+
+# =========================
+# Archivos de compilación
+# =========================
 dist/
+*.tsbuildinfo
+
+
+# =========================
+# Entorno virtual
+# =========================
 nenv/
+
+
+# =========================
+# Cobertura de pruebas
+# =========================
 coverage/
+
+
+# =========================
+# Variables de entorno
+# =========================
 .env
 .env.*
 !.env.example
-*.log
-src/generated/
-*.tsbuildinfo
 
-nenv/
+
+# =========================
+# Archivos generados
+# =========================
+backend/src/generated/
+
+
+# =========================
+# Logs
+# =========================
+*.log
