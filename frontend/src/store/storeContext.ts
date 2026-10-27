@@ -1,7 +1,17 @@
 import { createContext } from 'react';
 import type { LoginFailure } from '../services/auth/authService';
+import type { RealtimeStatus } from '../services/realtime/realtime';
 import type {
-  CartLine, Cotizacion, Database, EstadoConsulta, MetodoPago, Result, SessionUser, TipoMovimiento, Venta,
+  CartLine,
+  Cotizacion,
+  Database,
+  EstadoConsulta,
+  MetodoPago,
+  PrecioHistorial,
+  Result,
+  SessionUser,
+  TipoMovimiento,
+  Venta,
 } from '../types';
 
 export interface ProductoInput {
@@ -10,7 +20,10 @@ export interface ProductoInput {
   descripcion: string;
   categoriaId: string | null;
   marcaId: string | null;
-  precio: number;
+  /** Solo se envía si cambió y el rol tiene prices:write (Administración / Gerencia). */
+  precio?: number;
+  /** Motivo del cambio de precio (queda en el historial). */
+  motivoPrecio?: string;
   stockMin: number;
 }
 
@@ -52,7 +65,7 @@ export interface CondicionesPago {
 
 export type RefreshKey =
   | 'productos' | 'catalogos' | 'movimientos' | 'clientes' | 'proveedores' | 'ventas' | 'cotizaciones'
-  | 'pagos' | 'cxc' | 'ordenes' | 'consultas' | 'auditoria' | 'dashboard';
+  | 'pagos' | 'cxc' | 'ordenes' | 'consultas' | 'auditoria' | 'dashboard' | 'config';
 
 export interface DataActions {
   /** El servidor ya audita cada operación; se conserva por compatibilidad. */
@@ -68,6 +81,9 @@ export interface DataActions {
   convertirCotizacion(id: string, terms: CondicionesPago): Promise<Result<{ ventaId: string; factura: string }>>;
   confirmarVenta(cliId: string, lines: CartLine[], terms: CondicionesPago): Promise<Result<{ ventaId: string; factura: string }>>;
   obtenerVenta(id: string): Promise<Result<Venta>>;
+  /** Precio comercial (Administración / Gerencia: prices:write). */
+  cambiarPrecio(productoId: string, precio: number, motivo: string): Promise<Result>;
+  historialPrecios(productoId: string): Promise<Result<PrecioHistorial[]>>;
   anularVenta(id: string, motivo: string): Promise<Result>;
   registrarPago(ventaId: string, monto: number, metodo: 'Contado' | 'Transferencia', referencia: string): Promise<Result>;
   crearOrden(cliId: string, desc: string, tecnicoId: string | null): Promise<Result<string>>;
@@ -76,7 +92,8 @@ export interface DataActions {
   completarOrden(id: string, resumen: string): Promise<Result>;
   facturarOrden(id: string, ventaId: string): Promise<Result>;
   cancelarOrden(id: string, motivo: string): Promise<Result>;
-  crearConsulta(nombre: string, contacto: string, producto: string, msg: string): Promise<Result>;
+  /** Devuelve el código de la solicitud (SOL-000001). */
+  crearConsulta(nombre: string, contacto: string, producto: string, msg: string): Promise<Result<string | undefined>>;
   cambiarEstadoConsulta(id: string, estado: EstadoConsulta): Promise<Result>;
   refresh(keys: RefreshKey[]): Promise<void>;
 }
@@ -104,6 +121,8 @@ export interface StoreValue {
   can(permission: string): boolean;
   reload(): Promise<void>;
   actions: DataActions;
+  /** Estado del canal de tiempo real (WebSocket). */
+  realtime: RealtimeStatus;
 }
 
 export const StoreContext = createContext<StoreValue | null>(null);

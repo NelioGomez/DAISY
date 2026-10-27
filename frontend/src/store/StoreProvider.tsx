@@ -12,23 +12,44 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, api, errorMessage, getAll, setAuthToken, setUnauthorizedHandler } from '../services/api/client';
 import {
-  INQUIRY_TO_API, METHOD_TO_API, MOVEMENT_TO_API, mapAuditoria, mapCatalogo, mapCliente, mapConsulta, mapCotizacion,
-  mapCxc, mapDashboard, mapMovimiento, mapOrden, mapPago, mapProducto, mapProveedor, mapTecnico, mapVenta,
+  DEFAULT_CONFIG, INQUIRY_TO_API, METHOD_TO_API, MOVEMENT_TO_API, mapAuditoria, mapCatalogo, mapCliente, mapConsulta, mapCotizacion,
+  mapConfig, mapCxc, mapDashboard, mapMovimiento, mapOrden, mapPago, mapProducto, mapProveedor, mapTecnico, mapVenta,
 } from '../services/api/mappers';
 import * as authService from '../services/auth/authService';
+import { connectRealtime, disconnectRealtime, type ChangeEvent, type RealtimeStatus } from '../services/realtime/realtime';
 import type { CartLine, Database, Result, SessionUser } from '../types';
 import {
   StoreContext, type CondicionesPago, type DataActions, type LoadStatus, type LogoutInfo, type LogoutReason,
   type RefreshKey, type StoreValue,
 } from './storeContext';
 
-const ALL_KEYS: RefreshKey[] = ['productos', 'catalogos', 'movimientos', 'clientes', 'proveedores', 'ventas', 'cotizaciones', 'pagos', 'cxc', 'ordenes', 'consultas', 'auditoria', 'dashboard'];
+const ALL_KEYS: RefreshKey[] = ['config', 'productos', 'catalogos', 'movimientos', 'clientes', 'proveedores', 'ventas', 'cotizaciones', 'pagos', 'cxc', 'ordenes', 'consultas', 'auditoria', 'dashboard'];
+
+/** Qué colecciones recargar cuando el servidor avisa que cambió un módulo. */
+const CHANGE_KEYS: Record<string, RefreshKey[]> = {
+  products: ['productos', 'dashboard'],
+  categories: ['catalogos', 'productos'],
+  brands: ['catalogos', 'productos'],
+  inventory: ['productos', 'movimientos', 'dashboard'],
+  customers: ['clientes'],
+  suppliers: ['proveedores'],
+  quotations: ['cotizaciones', 'dashboard'],
+  sales: ['ventas', 'productos', 'movimientos', 'pagos', 'cxc', 'clientes', 'cotizaciones', 'ordenes', 'dashboard'],
+  payments: ['pagos', 'cxc', 'ventas', 'clientes', 'dashboard'],
+  'service-orders': ['ordenes', 'dashboard'],
+  inquiries: ['consultas', 'dashboard'],
+  settings: ['config', 'dashboard'],
+};
+
+/** Espera breve para juntar varios avisos seguidos en una sola recarga. */
+const REFRESH_DEBOUNCE_MS = 350;
 
 const SESSION_KEY = 'siven.session';
 
 const EMPTY_DB: Database = {
   productos: [], categorias: [], marcas: [], clientes: [], proveedores: [], movimientos: [], inventarioValor: 0,
   ventas: [], cotizaciones: [], pagos: [], cxc: [], ordenes: [], tecnicos: [], consultas: [], auditoria: [], dashboard: null,
+  config: DEFAULT_CONFIG,
 };
 
 interface StoredSession {
@@ -85,8 +106,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lastLogout, setLastLogout] = useState<LogoutInfo | null>(null);
 
+  const [realtime, setRealtime] = useState<RealtimeStatus>('off');
+
   const userRef = useRef<SessionUser | null>(null);
   const expiryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tiempo real: colecciones pendientes de recargar y acciones propias en curso.
+  const pendingKeys = useRef(new Set<RefreshKey>());
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ownActions = useRef({ running: 0, lastEnd: 0 });
 
   const can = useCallback((p: string) => !!userRef.current?.permissions.includes(p), []);
 
@@ -123,6 +150,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       consultas: async () => (has('inquiries:read') ? { consultas: (await getAll<Json>('/inquiries')).items.map(mapConsulta) } : {}),
       auditoria: async () => (has('audit:read') ? { auditoria: (await getAll<Json>('/audit', {}, 1)).items.map(mapAuditoria) } : {}),
       dashboard: async () => (has('dashboard:read') ? { dashboard: mapDashboard(await api.get<Json>('/dashboard/summary')) } : {}),
+      // Impuesto y datos de la empresa: cualquier usuario autenticado.
+      config: async () => ({ config: mapConfig(await api.get<Json>('/settings')) }),
     };
   }, []);
 
@@ -157,6 +186,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [loaders]);
 
+  /** Junta avisos del servidor y recarga una sola vez lo afectado. */
+  const queueRefresh = useCallback(
+    (keys: RefreshKey[]) => {
+      keys.forEach((k) => pendingKeys.current.add(k));
+      if (flushTimer.current) return;
+      flushTimer.current = setTimeout(() => {
+        flushTimer.current = null;
+        const batch = [...pendingKeys.current];
+        pendingKeys.current.clear();
+        if (userRef.current && batch.length) void refresh(batch);
+      }, REFRESH_DEBOUNCE_MS);
+    },
+    [refresh],
+  );
+
+  const onRemoteChange = useCallback(
+    (e: ChangeEvent) => {
+      const me = userRef.current;
+      if (!me) return;
+      // Lo que hizo este mismo usuario ya se recargó al terminar su acción.
+      const own = ownActions.current;
+      if (e.userId === me.id && (own.running > 0 || Date.now() - own.lastEnd < 3_000)) return;
+      const keys = CHANGE_KEYS[e.module];
+      if (keys) queueRefresh([...keys, 'auditoria']);
+    },
+    [queueRefresh],
+  );
+
   /* ---------- Sesión ---------- */
   const endSession = useCallback((reason: LogoutReason) => {
     const current = userRef.current;
@@ -164,6 +221,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     expiryTimer.current = null;
     if (current) setLastLogout({ reason, username: current.user });
     userRef.current = null;
+    disconnectRealtime();
+    setRealtime('off');
+    if (flushTimer.current) clearTimeout(flushTimer.current);
+    flushTimer.current = null;
+    pendingKeys.current.clear();
     setAuthToken(null);
     writeSession(null);
     setUser(null);
@@ -181,8 +243,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (expiryTimer.current) clearTimeout(expiryTimer.current);
       expiryTimer.current = setTimeout(() => endSession('expired'), Math.max(0, expiresAt - Date.now()));
       void loadAll();
+      connectRealtime(token, {
+        onChange: onRemoteChange,
+        onStatus: setRealtime,
+        onReconnect: () => queueRefresh(ALL_KEYS), // pudo perderse algún aviso durante la caída
+        onSessionEnded: () => {
+          if (userRef.current) endSession('expired');
+        },
+      });
     },
-    [endSession, loadAll],
+    [endSession, loadAll, onRemoteChange, queueRefresh],
   );
 
   // Si el servidor rechaza el token (vencido o usuario desactivado), se cierra la sesión.
@@ -213,12 +283,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   /* ---------- Acciones de negocio ---------- */
   const actions = useMemo<DataActions>(() => {
     const run = async <T,>(fn: () => Promise<T>, keys: RefreshKey[]): Promise<Result<T>> => {
+      ownActions.current.running++;
       try {
         const data = await fn();
         await refresh(keys);
         return ok(data);
       } catch (e) {
         return fail(errorMessage(e));
+      } finally {
+        ownActions.current.running--;
+        ownActions.current.lastEnd = Date.now();
       }
     };
 
@@ -234,10 +308,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         run(async () => {
           const body = {
             sku: d.sku, name: d.nombre, description: d.descripcion || undefined,
-            categoryId: d.categoriaId, brandId: d.marcaId, salePrice: d.precio, minStock: d.stockMin,
+            categoryId: d.categoriaId, brandId: d.marcaId, minStock: d.stockMin,
           };
-          if (id) await api.patch(`/products/${id}`, body);
-          else await api.post('/products', body);
+          if (id) {
+            await api.patch(`/products/${id}`, body);
+            // El precio tiene su propia sección (permiso prices:write) y queda en el historial.
+            if (d.precio !== undefined) await api.patch(`/products/${id}/price`, { salePrice: d.precio, ...(d.motivoPrecio ? { reason: d.motivoPrecio } : {}) });
+          } else {
+            await api.post('/products', { ...body, ...(d.precio !== undefined && { salePrice: d.precio }) });
+          }
         }, ['productos', 'catalogos', 'dashboard', 'auditoria']),
 
       cambiarEstadoProducto: (id, activo) =>
@@ -309,6 +388,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       },
 
+      cambiarPrecio: (productoId, precio, motivo) =>
+        run(
+          () => api.patch(`/products/${productoId}/price`, { salePrice: precio, ...(motivo.trim() ? { reason: motivo.trim() } : {}) }).then(() => undefined),
+          ['productos', 'dashboard', 'auditoria'],
+        ),
+
+      historialPrecios: async (productoId) => {
+        try {
+          const rows = await api.get<Json[]>(`/products/${productoId}/prices`);
+          return ok(
+            rows.map((r) => ({
+              id: String(r.id),
+              precio: Number(r.price),
+              desde: String(r.validFrom),
+              hasta: r.validTo ? String(r.validTo) : null,
+              motivo: String(r.reason ?? ''),
+              usuario: r.changedBy ? `@${r.changedBy.username}` : 'Sistema',
+            })),
+          );
+        } catch (e) {
+          return fail(errorMessage(e));
+        }
+      },
+
       anularVenta: (id, motivo) => run(() => api.post(`/sales/${id}/void`, { reason: motivo }).then(() => undefined), SALE_KEYS),
 
       registrarPago: (ventaId, monto, metodo, referencia) =>
@@ -332,9 +435,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       crearConsulta: async (nombre, contacto, producto, msg) => {
         try {
-          await api.post('/public/inquiries', { name: nombre.trim(), contact: contacto.trim(), ...(producto.trim() ? { productInterest: producto.trim() } : {}), ...(msg.trim() ? { message: msg.trim() } : {}) }, false);
+          const r = await api.post<{ code?: string }>('/public/inquiries', { name: nombre.trim(), contact: contacto.trim(), ...(producto.trim() ? { productInterest: producto.trim() } : {}), ...(msg.trim() ? { message: msg.trim() } : {}) }, false);
           if (userRef.current) await refresh(['consultas', 'dashboard']);
-          return ok(undefined);
+          return ok(r?.code);
         } catch (e) {
           return fail(errorMessage(e));
         }
@@ -353,6 +456,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       status,
       loadError,
       lastLogout,
+      realtime,
       actions,
       can,
       reload: loadAll,
@@ -369,7 +473,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
     }),
     // `user` se incluye para que `can` (estable) se reevalúe en los componentes al cambiar de sesión.
-    [db, user, booting, status, loadError, lastLogout, actions, can, loadAll, startSession, endSession],
+    [db, user, booting, status, loadError, lastLogout, realtime, actions, can, loadAll, startSession, endSession],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -19,6 +19,7 @@ import { SalesModule } from './sales/sales.module';
 import { ServiceOrdersModule } from './service-orders/service-orders.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -26,8 +27,11 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { validateEnv } from './config/env.validation';
 import { HealthController } from './health/health.controller';
 import { PrismaModule } from './prisma/prisma.module';
+import { MailModule } from './mail/mail.module';
+import { RealtimeModule } from './realtime/realtime.module';
 import { ProductsModule } from './products/products.module';
 import { RolesModule } from './roles/roles.module';
+import { SettingsModule } from './settings/settings.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -35,6 +39,8 @@ import { UsersModule } from './users/users.module';
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PrismaModule,
+    RealtimeModule,
+    MailModule,
     AuditModule,
     AuthModule,
     UsersModule,
@@ -54,6 +60,7 @@ import { UsersModule } from './users/users.module';
     ReportsModule,
     InquiriesModule,
     PublicModule,
+    SettingsModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -66,4 +73,8 @@ import { UsersModule } from './users/users.module';
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestLoggerMiddleware).forRoutes('*path');
+  }
+}

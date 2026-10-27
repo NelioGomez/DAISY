@@ -1,5 +1,5 @@
 import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsInt, IsNotEmpty, IsString, Max, Min, MinLength, validateSync } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, MinLength, validateSync } from 'class-validator';
 
 enum Environment {
   Development = 'development',
@@ -31,6 +31,18 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   CORS_ORIGIN: string = 'http://localhost:5173';
+
+  /** Qué peticiones HTTP se muestran en la terminal: off | changes | all. */
+  @IsIn(['off', 'changes', 'all'])
+  LOG_HTTP: 'off' | 'changes' | 'all' = 'changes';
+
+  // Correo (recuperación de contraseña). Sin SMTP_HOST, en desarrollo el código sale en la terminal.
+  @IsOptional() @IsString() SMTP_HOST?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(65535) SMTP_PORT?: number;
+  @IsOptional() @IsIn(['true', 'false']) SMTP_SECURE?: string;
+  @IsOptional() @IsString() SMTP_USER?: string;
+  @IsOptional() @IsString() SMTP_PASS?: string;
+  @IsOptional() @IsString() MAIL_FROM?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {
