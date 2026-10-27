@@ -1,4 +1,5 @@
 import { createContext } from 'react';
+import type { LoginFailure } from '../services/auth/authService';
 import type {
   CartLine, Cotizacion, Database, EstadoConsulta, MetodoPago, Result, SessionUser, TipoMovimiento, Venta,
 } from '../types';
@@ -52,6 +53,13 @@ export interface CondicionesPago {
 export type RefreshKey =
   | 'productos' | 'catalogos' | 'movimientos' | 'clientes' | 'proveedores' | 'ventas' | 'cotizaciones'
   | 'pagos' | 'cxc' | 'ordenes' | 'consultas' | 'auditoria' | 'dashboard';
+
+export type LoginResult = { ok: true; user: SessionUser } | LoginFailure;
+export type LogoutReason = 'manual' | 'idle';
+export interface LogoutInfo {
+  reason: LogoutReason;
+  username: string;
+}
 
 export interface DataActions {
   /** El servidor ya audita cada operación; se conserva por compatibilidad. */
