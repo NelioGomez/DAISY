@@ -6,6 +6,9 @@ Cliente web del Sistema de Gestión de Ventas e Inventario de NORCOR, construido
 Todos los datos vienen de la API NestJS (`/api/v1`): sesión con JWT, permisos por rol,
 inventario, ventas, cobros, órdenes OPI, auditoría y catálogo público. Las reglas de negocio
 (stock, costo promedio, IVA, créditos, transiciones de estado) las aplica el servidor.
+Todos los datos vienen de la API NestJS (`/api/v1`): sesión con JWT, permisos por rol,
+inventario, ventas, cobros, órdenes OPI, auditoría y catálogo público. Las reglas de negocio
+(stock, costo promedio, IVA, créditos, transiciones de estado) las aplica el servidor.
 
 ## Requisitos
 
@@ -31,12 +34,37 @@ node scripts/seed-demo.mjs       # (otra terminal, con la API corriendo) usuario
 ```
 
 **2. Frontend:**
+## Cómo levantarlo (backend + frontend)
+
+Se necesitan las dos partes corriendo a la vez, cada una en su terminal.
+
+**1. Backend** (repositorio `DAISY_VF/backend`, requiere PostgreSQL 16):
+
+```bash
+cd backend
+npm install
+# .env: DATABASE_URL, JWT_SECRET, SEED_ADMIN_PASSWORD y CORS_ORIGIN
+#   - Si la contraseña lleva "#", va entre comillas: SEED_ADMIN_PASSWORD="Siven#Admin2026"
+#   - CORS_ORIGIN debe incluir http://localhost:5173
+#   - Para probar con calma: JWT_EXPIRES_IN=8h (por defecto la sesión dura 15 min)
+npx prisma migrate deploy
+npx prisma db seed               # roles, permisos y usuario admin
+npm run start:dev                # API en http://localhost:3000/api/v1
+node scripts/seed-demo.mjs       # (otra terminal, con la API corriendo) usuarios y datos de prueba
+```
+
+**2. Frontend:**
 
 ```bash
 cd frontend
 npm install
 npm run dev          # http://localhost:5173
+npm install
+npm run dev          # http://localhost:5173
 ```
+
+En desarrollo Vite reenvía `/api` a `http://localhost:3000` (ver `vite.config.ts`), así que no hay
+problemas de CORS. Si la API corre en otro puerto o equipo, definir `VITE_BACKEND_URL` en `.env`.
 
 En desarrollo Vite reenvía `/api` a `http://localhost:3000` (ver `vite.config.ts`), así que no hay
 problemas de CORS. Si la API corre en otro puerto o equipo, definir `VITE_BACKEND_URL` en `.env`.
@@ -45,6 +73,7 @@ problemas de CORS. Si la API corre en otro puerto o equipo, definir `VITE_BACKEN
 | ----------------- | ----------------------------------------------------- |
 | `npm run dev`     | Desarrollo con recarga en caliente                     |
 | `npm run build`   | Verifica tipos (tsc) y genera `dist/` para producción |
+| `npm run preview` | Sirve localmente el build de `dist/` (también con proxy) |
 | `npm run preview` | Sirve localmente el build de `dist/` (también con proxy) |
 | `npm run lint`    | Revisa el código con oxlint                           |
 
@@ -119,6 +148,11 @@ src/
     auth/           Login, sesión y recuperación de contraseña
     mock/users.ts   Solo para la simulación de recuperación
   store/            Carga de datos por permisos, acciones y hooks useAuth / useData
+    api/client.ts   Cliente HTTP (token, errores, paginación)
+    api/mappers.ts  Traduce la respuesta de la API a los tipos del frontend
+    auth/           Login, sesión y recuperación de contraseña
+    mock/users.ts   Solo para la simulación de recuperación
+  store/            Carga de datos por permisos, acciones y hooks useAuth / useData
   styles/           CSS global (identidad visual original)
   types/            Tipos de dominio
   utils/            Formato, CSV, cálculo de documentos
@@ -127,7 +161,12 @@ src/
 ## Cómo está organizada la lógica
 
 - Los componentes **no llaman a la API directamente**: usan acciones de `useData()`
+- Los componentes **no llaman a la API directamente**: usan acciones de `useData()`
   (`confirmarVenta`, `registrarMovimiento`, `registrarPago`…), que devuelven `{ ok, data | error }`.
+- Las acciones viven en `store/StoreProvider.tsx`: llaman a la API y, al terminar, recargan solo
+  las colecciones afectadas (por ejemplo, una venta refresca ventas, stock, cobros y dashboard).
+- Al iniciar sesión se cargan solo las colecciones que el rol puede leer.
+- Ocultar botones por rol es solo comodidad visual; la autorización real la hacen los guards de NestJS.
 - Las acciones viven en `store/StoreProvider.tsx`: llaman a la API y, al terminar, recargan solo
   las colecciones afectadas (por ejemplo, una venta refresca ventas, stock, cobros y dashboard).
 - Al iniciar sesión se cargan solo las colecciones que el rol puede leer.

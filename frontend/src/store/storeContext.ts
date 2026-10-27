@@ -2,6 +2,7 @@ import { createContext } from 'react';
 import type { LoginFailure } from '../services/auth/authService';
 import type {
   CartLine, Cotizacion, Database, EstadoConsulta, MetodoPago, Result, SessionUser, TipoMovimiento, Venta,
+  CartLine, Cotizacion, Database, EstadoConsulta, MetodoPago, Result, SessionUser, TipoMovimiento, Venta,
 } from '../types';
 
 export interface ProductoInput {
@@ -97,10 +98,16 @@ export interface StoreValue {
   booting: boolean;
   status: LoadStatus;
   loadError: string | null;
+  /** true mientras se intenta restaurar la sesión guardada al recargar la página. */
+  booting: boolean;
+  status: LoadStatus;
+  loadError: string | null;
   login(username: string, password: string): Promise<LoginResult>;
   logout(reason?: LogoutReason): void;
   /** Motivo del último cierre de sesión (para avisar en el login). */
   lastLogout: LogoutInfo | null;
+  can(permission: string): boolean;
+  reload(): Promise<void>;
   can(permission: string): boolean;
   reload(): Promise<void>;
   actions: DataActions;

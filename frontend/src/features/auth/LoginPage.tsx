@@ -11,7 +11,9 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../../components/feedback/useToast';
 import { isModuleId, visibleModules } from '../../config/navigation';
+import { isModuleId, visibleModules } from '../../config/navigation';
 import { REMEMBER_USER_KEY, SHOW_DEMO_ACCOUNTS, USERNAME_MAX } from '../../config/security';
+import { ACCESS, MODULE_COUNT, ROLES, ROLE_KEYS } from '../../config/navigation';
 import { useAuth } from '../../store/hooks';
 import type { SessionUser } from '../../types';
 import type { LoginRedirectState } from '../../app/router/guards';
@@ -88,6 +90,8 @@ export function LoginPage() {
   const secondsLeft = Math.max(0, Math.ceil((lockedUntil - now) / 1000));
   // El servidor limita los intentos por dirección IP, no por usuario.
   const locked = secondsLeft > 0;
+  // El servidor limita los intentos por dirección IP, no por usuario.
+  const locked = secondsLeft > 0;
 
   // Foco inicial: usuario vacío → usuario; usuario recordado → contraseña.
   useEffect(() => {
@@ -112,6 +116,7 @@ export function LoginPage() {
   }, [lockedUntil]);
 
   if (user) return <Navigate to={destinationFor(user, from)} replace />;
+  if (user) return <Navigate to={destinationFor(user, from)} replace />;
 
   const validate = () => {
     const e: typeof errors = {};
@@ -119,6 +124,9 @@ export function LoginPage() {
     if (!password) e.password = 'Escriba su contraseña.';
     setErrors(e);
     return e;
+  const selectRole = (r: RoleKey) => {
+    setRole(r);
+    setUsername(ROLES[r].user);
   };
 
   const handleSubmit = async (ev: FormEvent) => {
@@ -137,6 +145,7 @@ export function LoginPage() {
       storeRememberedUser(remember ? res.user.user : null);
       toast('Sesión iniciada como ' + res.user.name, 'ok');
       navigate(destinationFor(res.user, from), { replace: true });
+      navigate(destinationFor(res.user, from), { replace: true });
       return;
     }
 
@@ -148,9 +157,14 @@ export function LoginPage() {
       setNotice({ tone: 'warning', text: res.message });
     } else if (res.code === 'INVALID_CREDENTIALS') {
       // El dato de intentos restantes viene del límite real del servidor (X-RateLimit-Remaining).
+    } else if (res.code === 'INVALID_CREDENTIALS') {
+      // El dato de intentos restantes viene del límite real del servidor (X-RateLimit-Remaining).
       const n = res.remainingAttempts;
       const extra = n === null || n > 2 ? '' : n <= 0 ? ' El siguiente intento fallido bloqueará el acceso por un minuto.' : n === 1 ? ' Le queda 1 intento antes del bloqueo temporal.' : ` Le quedan ${n} intentos antes del bloqueo temporal.`;
+      const extra = n === null || n > 2 ? '' : n <= 0 ? ' El siguiente intento fallido bloqueará el acceso por un minuto.' : n === 1 ? ' Le queda 1 intento antes del bloqueo temporal.' : ` Le quedan ${n} intentos antes del bloqueo temporal.`;
       setNotice({ tone: 'error', text: res.message + extra });
+    } else {
+      setNotice({ tone: res.code === 'NETWORK' ? 'warning' : 'error', text: res.message });
     } else {
       setNotice({ tone: res.code === 'NETWORK' ? 'warning' : 'error', text: res.message });
     }
@@ -162,6 +176,12 @@ export function LoginPage() {
     setPassword(p);
     setErrors({});
     setNotice(null);
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    // Autenticación simulada: la contraseña aún no se valida (se hará con /auth/login en NestJS).
+    const u = login(role, username);
+    toast('Sesión iniciada como ' + u.name, 'ok');
+    navigate(`/app/${ACCESS[role][0]}`);
   };
 
   return (
