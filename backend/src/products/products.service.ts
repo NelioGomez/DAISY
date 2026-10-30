@@ -13,8 +13,11 @@ import { decimalToNumber } from '../common/utils/decimal';
 import { setPriceContext } from '../common/utils/db-context';
 import { buildPagination } from '../common/utils/pagination';
 import { isForeignKeyViolation, isUniqueViolation } from '../common/utils/prisma-errors';
-import type { Prisma } from '../generated/prisma/client';
+import { addDays } from '../common/utils/dates';
+import { Prisma, PurchaseStatus, UserRole } from '../generated/prisma/client';
+import { MOVEMENT_ORIGIN_INCLUDE, movementOrigin } from '../inventory/movement-origin';
 import { PrismaService } from '../prisma/prisma.service';
+import { ts } from '../reports/report-sql';
 import {
   CreateProductDto,
   FilterProductDto,
@@ -36,6 +39,8 @@ const PRODUCT_SELECT = {
   salePrice: true,
   stock: true,
   minStock: true,
+  maxStock: true,
+  restockPostponedUntil: true,
   isActive: true,
   createdAt: true,
   updatedAt: true,
@@ -54,6 +59,8 @@ interface ProductRow {
   salePrice: { toString(): string };
   stock: number;
   minStock: number;
+  maxStock?: number | null;
+  restockPostponedUntil?: Date | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -136,6 +143,7 @@ export class ProductsService {
   async create(dto: CreateProductDto, actor: AuthUser, ip?: string) {
     await this.assertSkuFree(dto.sku);
     await this.assertRelations(dto.categoryId, dto.brandId);
+    this.assertStockLimits(dto.minStock ?? 0, dto.maxStock ?? null);
     if (dto.salePrice !== undefined && dto.salePrice > 0) this.assertCanPrice(actor);
 
     try {
@@ -152,6 +160,7 @@ export class ProductsService {
             brandId: dto.brandId ?? null,
             salePrice: dto.salePrice ?? 0,
             minStock: dto.minStock ?? 0,
+            maxStock: dto.maxStock ?? null,
             isActive: dto.isActive ?? true,
           },
           select: PRODUCT_SELECT,
@@ -169,6 +178,9 @@ export class ProductsService {
     const existing = await this.findOne(id);
     if (dto.sku && dto.sku !== existing.sku) await this.assertSkuFree(dto.sku, id);
     await this.assertRelations(dto.categoryId, dto.brandId);
+    if (dto.minStock !== undefined || dto.maxStock !== undefined) {
+      this.assertStockLimits(dto.minStock ?? existing.minStock, dto.maxStock !== undefined ? dto.maxStock : existing.maxStock);
+    }
 
     const priceChanges = dto.salePrice !== undefined && dto.salePrice !== existing.salePrice;
     if (priceChanges) this.assertCanPrice(actor);
@@ -185,6 +197,7 @@ export class ProductsService {
           ...(dto.brandId !== undefined && { brandId: dto.brandId }),
           ...(priceChanges && { salePrice: dto.salePrice }),
           ...(dto.minStock !== undefined && { minStock: dto.minStock }),
+          ...(dto.maxStock !== undefined && { maxStock: dto.maxStock }),
         },
         select: PRODUCT_SELECT,
       });
@@ -259,6 +272,143 @@ export class ProductsService {
     return this.toDto(updated);
   }
 
+  /**
+   * Ficha detallada (mejora n.° 3): todo lo del producto en una sola consulta —datos maestros,
+   * existencias, rotación, últimos movimientos, ventas recientes, proveedores, compras en camino e
+   * historial de precios. Cada sección llega en null si el rol no puede verla (igual que el dashboard).
+   */
+  async detail(id: string, actor: AuthUser) {
+    const product = await this.findOne(id);
+    const can = (p: string) => actor.role === UserRole.ADMIN || actor.permissions.includes(p);
+    const now = new Date();
+    const since30 = addDays(now, -30);
+    const since90 = addDays(now, -90);
+
+    const [stats, movements, sales, suppliers, incoming, prices] = await Promise.all([
+      can('sales:read')
+        ? (this.prisma.$queryRaw(Prisma.sql`
+            SELECT COALESCE(SUM(si.quantity) FILTER (WHERE s.sold_at >= ${ts(since30)}), 0)::int AS units30,
+                   COALESCE(SUM(si.quantity) FILTER (WHERE s.sold_at >= ${ts(since90)}), 0)::int AS units90,
+                   COALESCE(SUM(si.subtotal) FILTER (WHERE s.sold_at >= ${ts(since90)}), 0)::text AS revenue90,
+                   COALESCE(SUM((si.unit_price - si.unit_cost) * si.quantity) FILTER (WHERE s.sold_at >= ${ts(since90)}), 0)::text AS margin90,
+                   MAX(s.sold_at) AS last_sale
+            FROM sale_items si JOIN sales s ON s.id = si.sale_id
+            WHERE si.product_id = ${id}::uuid AND s.status = 'ACTIVE'`) as Promise<Record<string, unknown>[]>)
+        : Promise.resolve(null),
+      can('inventory:read')
+        ? this.prisma.inventoryMovement.findMany({
+            where: { productId: id },
+            include: { user: { select: { username: true } }, supplier: { select: { name: true } }, ...MOVEMENT_ORIGIN_INCLUDE },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 20,
+          })
+        : Promise.resolve(null),
+      can('sales:read')
+        ? this.prisma.saleItem.findMany({
+            where: { productId: id },
+            select: {
+              quantity: true,
+              unitPrice: true,
+              subtotal: true,
+              sale: { select: { id: true, invoiceNumber: true, soldAt: true, status: true, customer: { select: { id: true, name: true } } } },
+            },
+            orderBy: { sale: { soldAt: 'desc' } },
+            take: 10,
+          })
+        : Promise.resolve(null),
+      can('suppliers:read') || can('purchases:read')
+        ? this.prisma.productSupplier.findMany({
+            where: { productId: id },
+            include: { supplier: { select: { id: true, name: true, country: true, isActive: true } } },
+            orderBy: [{ isPreferred: 'desc' }, { updatedAt: 'desc' }],
+          })
+        : Promise.resolve(null),
+      can('purchases:read')
+        ? this.prisma.purchaseItem.findMany({
+            where: { productId: id, purchase: { status: { in: [PurchaseStatus.ORDERED, PurchaseStatus.PARTIALLY_RECEIVED] } } },
+            select: {
+              quantity: true,
+              receivedQuantity: true,
+              purchase: { select: { id: true, code: true, expectedAt: true, supplier: { select: { name: true } } } },
+            },
+          })
+        : Promise.resolve(null),
+      can('prices:read') ? this.priceHistory(id).then((r) => r.slice(0, 10)) : Promise.resolve(null),
+    ]);
+
+    const s = stats?.[0];
+    const units90 = s ? Number(s.units90 ?? 0) : null;
+    const daily = units90 !== null ? units90 / 90 : null;
+    const daysOfCover = daily && daily > 0 ? Math.floor(product.stock / daily) : null;
+    const pending = (incoming ?? []).map((i) => ({
+      purchaseId: i.purchase.id,
+      code: i.purchase.code,
+      supplier: i.purchase.supplier.name,
+      expectedAt: i.purchase.expectedAt,
+      pending: i.quantity - i.receivedQuantity,
+    }));
+
+    return {
+      product,
+      availability: product.stock <= 0 ? 'OUT_OF_STOCK' : product.stock <= product.minStock ? 'LOW' : 'AVAILABLE',
+      stats: s
+        ? {
+            unitsLast30Days: Number(s.units30 ?? 0),
+            unitsLast90Days: units90,
+            revenueLast90Days: Number(s.revenue90 ?? 0),
+            marginLast90Days: Number(s.margin90 ?? 0),
+            lastSaleAt: (s.last_sale as Date | null) ?? null,
+            /** Días que alcanza el stock al ritmo de los últimos 90 días (null si no se vendió). */
+            daysOfCover,
+            /** Rotación: ALTA (≤ 30 días de stock), MEDIA (≤ 90), BAJA (> 90), SIN_MOVIMIENTO (sin ventas en 90 días). */
+            rotation: units90 === 0 ? 'SIN_MOVIMIENTO' : daysOfCover === null ? 'SIN_MOVIMIENTO' : daysOfCover <= 30 ? 'ALTA' : daysOfCover <= 90 ? 'MEDIA' : 'BAJA',
+          }
+        : null,
+      incoming: incoming ? { units: pending.reduce((n, p) => n + p.pending, 0), purchases: pending } : null,
+      movements: movements
+        ? movements.map((m) => ({
+            id: m.id,
+            type: m.type,
+            quantity: m.quantity,
+            unitCost: decimalToNumber(m.unitCost),
+            stockBefore: m.stockBefore,
+            stockAfter: m.stockAfter,
+            reference: m.reference,
+            note: m.note,
+            user: m.user?.username ?? null,
+            supplier: m.supplier?.name ?? null,
+            locationId: m.locationId,
+            origin: movementOrigin(m),
+            createdAt: m.createdAt,
+          }))
+        : null,
+      sales: sales
+        ? sales.map((i) => ({
+            saleId: i.sale.id,
+            invoiceNumber: i.sale.invoiceNumber,
+            soldAt: i.sale.soldAt,
+            status: i.sale.status,
+            customer: i.sale.customer,
+            quantity: i.quantity,
+            unitPrice: decimalToNumber(i.unitPrice),
+            subtotal: decimalToNumber(i.subtotal),
+          }))
+        : null,
+      suppliers: suppliers
+        ? suppliers.map((ps) => ({
+            supplier: ps.supplier,
+            supplierSku: ps.supplierSku,
+            lastCost: ps.lastCost === null ? null : decimalToNumber(ps.lastCost),
+            currency: ps.currency,
+            leadTimeDays: ps.leadTimeDays,
+            isPreferred: ps.isPreferred,
+            updatedAt: ps.updatedAt,
+          }))
+        : null,
+      prices,
+    };
+  }
+
   /** Historial de precios del producto, del más reciente al más antiguo. */
   async priceHistory(id: string) {
     await this.findOne(id);
@@ -285,6 +435,16 @@ export class ProductsService {
       throw new ForbiddenException({
         message: 'Su rol no puede fijar precios',
         errors: [{ field: 'salePrice', message: 'El precio comercial lo establece Administración o Gerencia' }],
+      });
+    }
+  }
+
+  /** Mismo criterio que el CHECK chk_products_max_stock: el tope no puede quedar debajo del mínimo. */
+  private assertStockLimits(minStock: number, maxStock: number | null | undefined) {
+    if (maxStock !== null && maxStock !== undefined && maxStock < minStock) {
+      throw new BadRequestException({
+        message: 'Datos de producto inválidos',
+        errors: [{ field: 'maxStock', message: `El stock máximo (${maxStock}) no puede ser menor que el mínimo (${minStock})` }],
       });
     }
   }
@@ -383,6 +543,8 @@ export class ProductsService {
       salePrice: decimalToNumber(p.salePrice),
       stock: p.stock,
       minStock: p.minStock,
+      maxStock: p.maxStock ?? null,
+      restockPostponedUntil: p.restockPostponedUntil ?? null,
       lowStock: p.stock <= p.minStock,
       isActive: p.isActive,
       createdAt: p.createdAt,

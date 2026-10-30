@@ -317,6 +317,51 @@ describe('API (smoke)', () => {
     expect(res.text).toContain('CONVERTED');
   });
 
+  // ───────────── Portal de clientes ─────────────
+
+  it('portal: sin token → 401; un token del personal no abre el portal', async () => {
+    await request(server()).get('/api/v1/portal/me').expect(401);
+    await request(server()).get('/api/v1/portal/inquiries').set(auth()).expect(401);
+  });
+
+  it('portal: un token de cliente no abre la API interna', async () => {
+    const customerToken = app.get(JwtService).sign({ sub: 'acc1', cid: 'c1', typ: 'customer' });
+    await request(server()).get('/api/v1/products').set('Authorization', `Bearer ${customerToken}`).expect(401);
+  });
+
+  it('portal: registro con datos inválidos → 422 (sin tocar la base)', async () => {
+    const res = await request(server()).post('/api/v1/portal/auth/register').send({ email: 'no-es-correo', password: 'x' }).expect(422);
+    expect(res.body.errors.length).toBeGreaterThan(1);
+  });
+
+  // ───────────── Compras y reabastecimiento ─────────────
+
+  it('compras: sin purchases:read → 403; "restock" no se confunde con un :id', async () => {
+    asUser('SELLER', ['sales:read']);
+    await request(server()).get('/api/v1/purchases').set(auth()).expect(403);
+    asUser('SELLER', ['sales:read']);
+    await request(server()).get('/api/v1/purchases/restock').set(auth()).expect(403);
+  });
+
+  it('compras: recibir exige purchases:write Y inventory:write', async () => {
+    asUser('INVENTORY_MANAGER', ['purchases:write']);
+    await request(server())
+      .post('/api/v1/purchases/11111111-1111-4111-8111-111111111111/receive')
+      .set(auth())
+      .send({ items: [{ purchaseItemId: '11111111-1111-4111-8111-111111111111', quantity: 1 }] })
+      .expect(403);
+  });
+
+  it('compras: cuerpo inválido → 422 (cantidad 0, costo negativo)', async () => {
+    asUser('INVENTORY_MANAGER', ['purchases:write']);
+    const res = await request(server())
+      .post('/api/v1/purchases')
+      .set(auth())
+      .send({ supplierId: '11111111-1111-4111-8111-111111111111', items: [{ productId: '11111111-1111-4111-8111-111111111111', quantity: 0, unitCost: -1 }] })
+      .expect(422);
+    expect(res.body.errors.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('dashboard: /dashboard/summary con datos del servidor, por permisos', async () => {
     prismaMock.$queryRaw.mockResolvedValue([]);
     asUser('TECHNICIAN', ['dashboard:read', 'service-orders:read']);

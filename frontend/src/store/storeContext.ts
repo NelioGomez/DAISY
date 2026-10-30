@@ -3,13 +3,19 @@ import type { LoginFailure } from '../services/auth/authService';
 import type { RealtimeStatus } from '../services/realtime/realtime';
 import type {
   CartLine,
+  Compra,
+  ConsultaWeb,
   Cotizacion,
+  FichaProducto,
   Database,
   EstadoConsulta,
   MetodoPago,
+  Moneda,
   PrecioHistorial,
+  ResumenReposicion,
   Result,
   SessionUser,
+  SugerenciaReposicion,
   TipoMovimiento,
   Venta,
 } from '../types';
@@ -25,6 +31,27 @@ export interface ProductoInput {
   /** Motivo del cambio de precio (queda en el historial). */
   motivoPrecio?: string;
   stockMin: number;
+  /** Tope de reposición; null = sin definir. */
+  stockMax: number | null;
+}
+
+export interface CompraLineaInput {
+  prod: string;
+  cant: number;
+  /** Costo unitario del proveedor, en la moneda de la compra. */
+  costo: number;
+}
+
+export interface CompraInput {
+  proveedorId: string;
+  moneda: Moneda;
+  /** C$ por US$ (solo en dólares). */
+  tipoCambio?: number;
+  /** AAAA-MM-DD */
+  esperada?: string;
+  gastos?: number;
+  notas?: string;
+  lineas: CompraLineaInput[];
 }
 
 export interface ClienteInput {
@@ -64,7 +91,7 @@ export interface CondicionesPago {
 }
 
 export type RefreshKey =
-  | 'productos' | 'catalogos' | 'movimientos' | 'clientes' | 'proveedores' | 'ventas' | 'cotizaciones'
+  | 'productos' | 'catalogos' | 'movimientos' | 'compras' | 'clientes' | 'proveedores' | 'ventas' | 'cotizaciones'
   | 'pagos' | 'cxc' | 'ordenes' | 'consultas' | 'auditoria' | 'dashboard' | 'config';
 
 export interface DataActions {
@@ -75,7 +102,7 @@ export interface DataActions {
   registrarMovimiento(data: MovimientoInput): Promise<Result<{ sku: string; stock: number }>>;
   guardarCliente(id: string | null, data: ClienteInput): Promise<Result>;
   guardarProveedor(id: string | null, data: ProveedorInput): Promise<Result>;
-  crearCotizacion(cliId: string, lines: CartLine[], notas: string): Promise<Result<string>>;
+  crearCotizacion(cliId: string, lines: CartLine[], notas: string): Promise<Result<{ id: string; codigo: string }>>;
   cambiarEstadoCotizacion(id: string, accion: 'submit' | 'approve' | 'reject', motivo?: string): Promise<Result>;
   obtenerCotizacion(id: string): Promise<Result<Cotizacion>>;
   convertirCotizacion(id: string, terms: CondicionesPago): Promise<Result<{ ventaId: string; factura: string }>>;
@@ -93,8 +120,28 @@ export interface DataActions {
   facturarOrden(id: string, ventaId: string): Promise<Result>;
   cancelarOrden(id: string, motivo: string): Promise<Result>;
   /** Devuelve el código de la solicitud (SOL-000001). */
-  crearConsulta(nombre: string, contacto: string, producto: string, msg: string): Promise<Result<string | undefined>>;
   cambiarEstadoConsulta(id: string, estado: EstadoConsulta): Promise<Result>;
+  obtenerConsulta(id: string): Promise<Result<ConsultaWeb>>;
+  /** Solicitud web → cotización precargada (la solicitud pasa a Cotizada y se conserva). */
+  cotizarConsulta(id: string, data: { cliId?: string; lineas?: CartLine[]; notas?: string; borrador?: boolean }): Promise<Result<{ id: string; codigo: string }>>;
+
+  /* ---------- Ficha de producto ---------- */
+  fichaProducto(id: string): Promise<Result<FichaProducto>>;
+
+  /* ---------- Compras y reabastecimiento ---------- */
+  /** Crea (id null) o modifica un borrador; con ordenar=true queda pendiente de recibir. */
+  guardarCompra(id: string | null, data: CompraInput, ordenar: boolean): Promise<Result<{ id: string; codigo: string }>>;
+  /** Ya ordenada: solo fecha esperada y notas. */
+  actualizarSeguimientoCompra(id: string, esperada: string | null, notas: string): Promise<Result>;
+  ordenarCompra(id: string): Promise<Result>;
+  recibirCompra(id: string, lineas: Array<{ lineaId: string; cant: number }>, notas: string): Promise<Result<{ recepcion: string; estado: Compra['estado'] }>>;
+  cancelarCompra(id: string, motivo: string): Promise<Result>;
+  eliminarCompra(id: string): Promise<Result>;
+  obtenerCompra(id: string): Promise<Result<Compra>>;
+  sugerenciasReposicion(incluirPospuestos: boolean): Promise<Result<{ items: SugerenciaReposicion[]; resumen: ResumenReposicion }>>;
+  posponerReposicion(productoId: string, dias: number, motivo: string): Promise<Result>;
+  reactivarReposicion(productoId: string): Promise<Result>;
+
   refresh(keys: RefreshKey[]): Promise<void>;
 }
 
