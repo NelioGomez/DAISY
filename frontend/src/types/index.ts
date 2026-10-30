@@ -10,6 +10,7 @@ export type ModuleId =
   | 'dashboard'
   | 'productos'
   | 'inventario'
+  | 'compras'
   | 'clientes'
   | 'proveedores'
   | 'cotizaciones'
@@ -58,6 +59,8 @@ export interface Producto {
   precio: number;
   stock: number;
   stockMin: number;
+  /** Tope de reposición (null = sin definir). */
+  stockMax: number | null;
   ic: string;
   activo: boolean;
 }
@@ -105,6 +108,149 @@ export interface Movimiento {
   nota: string;
   resp: string;
   proveedor: string;
+  /** Documento que originó el movimiento (venta o recepción de compra), si lo hay. */
+  origen: DocumentoRef | null;
+}
+
+/* ---------- Compras y reabastecimiento ---------- */
+
+export type EstadoCompra = 'Borrador' | 'Ordenada' | 'Parcial' | 'Recibida' | 'Cancelada';
+export type Moneda = 'NIO' | 'USD';
+
+export interface CompraLinea {
+  id: string;
+  prod: string;
+  sku: string;
+  prodN: string;
+  cant: number;
+  /** En la moneda de la compra. */
+  costo: number;
+  sub: number;
+  recibido: number;
+  pendiente: number;
+  /** Costo unitario en C$ con gastos prorrateados (el que entra al costo promedio). */
+  costoBodega: number;
+  stockActual: number;
+}
+
+export interface Recepcion {
+  id: string;
+  codigo: string;
+  fecha: string;
+  usuario: string;
+  ubicacion: string;
+  notas: string;
+  unidades: number;
+  items: Array<{ id: string; prod: string; sku: string; prodN: string; cant: number; costo: number; movimientoId: string | null }>;
+}
+
+export interface Compra {
+  id: string;
+  codigo: string;
+  estado: EstadoCompra;
+  proveedorId: string;
+  proveedor: string;
+  internacional: boolean;
+  moneda: Moneda;
+  tipoCambio: number;
+  fecha: string;
+  ordenada: string | null;
+  esperada: string | null;
+  sub: number;
+  gastos: number;
+  total: number;
+  totalNio: number;
+  notas: string;
+  motivoCancelacion: string;
+  usuario: string;
+  lineas: number;
+  unidades: number;
+  recibidas: number;
+  recepciones: number;
+  atrasada: boolean;
+  /** Solo en el detalle (GET /purchases/:id). */
+  items?: CompraLinea[];
+  detalleRecepciones?: Recepcion[];
+}
+
+export interface ResumenCompras {
+  porEstado: Record<EstadoCompra, number>;
+  pendientes: number;
+  comprado30: { monto: number; compras: number };
+}
+
+export type ReglaReposicion = 'MAX_STOCK' | 'TWICE_MIN' | 'MIN_PLUS_DEMAND';
+
+export interface SugerenciaReposicion {
+  prod: string;
+  sku: string;
+  prodN: string;
+  categoria: string;
+  stock: number;
+  stockMin: number;
+  stockMax: number | null;
+  costoProm: number;
+  vendido30: number;
+  diasCobertura: number | null;
+  enCamino: number;
+  enBorrador: number;
+  objetivo: number;
+  regla: ReglaReposicion;
+  sugerido: number;
+  cubierto: boolean;
+  sinRegla: boolean;
+  explicacion: string;
+  agotado: boolean;
+  proveedor: { id: string; nombre: string; ultimoCosto: number | null; moneda: Moneda | null; plazo: number | null } | null;
+  costoEstimado: number;
+  pospuestoHasta: string | null;
+}
+
+export interface ResumenReposicion {
+  productos: number;
+  porPedir: number;
+  unidades: number;
+  cubiertos: number;
+  pospuestos: number;
+  costoEstimado: number;
+  diasDemanda: number;
+}
+
+/* ---------- Ficha detallada de producto ---------- */
+
+export type Rotacion = 'ALTA' | 'MEDIA' | 'BAJA' | 'SIN_MOVIMIENTO';
+
+/** GET /products/:id/detail. Cada sección es null si el rol no puede verla. */
+export interface FichaProducto {
+  producto: Producto;
+  estadoStock: 'Agotado' | 'Bajo' | 'Disponible';
+  stats: {
+    vendidas30: number;
+    vendidas90: number;
+    ingresos90: number;
+    margen90: number;
+    ultimaVenta: string | null;
+    diasCobertura: number | null;
+    rotacion: Rotacion;
+  } | null;
+  enCamino: { unidades: number; compras: Array<{ id: string; codigo: string; proveedor: string; esperada: string | null; pendiente: number }> } | null;
+  movimientos: Array<Movimiento & { ubicacion: string }> | null;
+  ventas: Array<{ ventaId: string; factura: string; fecha: string; anulada: boolean; cliente: string; cant: number; precio: number; sub: number }> | null;
+  proveedores: Array<{ id: string; nombre: string; pais: string; codigo: string; ultimoCosto: number | null; moneda: Moneda; plazo: number | null; preferente: boolean }> | null;
+  precios: PrecioHistorial[] | null;
+}
+
+/* ---------- Trazabilidad documental ---------- */
+
+export type TipoDocumento = 'SOLICITUD' | 'COTIZACION' | 'VENTA' | 'PAGO' | 'COMPRA' | 'RECEPCION' | 'MOVIMIENTO';
+
+/** Referencia navegable a un documento relacionado. */
+export interface DocumentoRef {
+  tipo: TipoDocumento;
+  id: string;
+  codigo: string;
+  /** Para movimientos de recepción: la compra a la que pertenece. */
+  compraId?: string;
 }
 
 /** Línea de un documento comercial (cotización o venta). */
@@ -116,6 +262,8 @@ export interface LineaDocumento {
   precio: number;
   sub: number;
   disponible?: number;
+  /** Stock mínimo del producto (para advertir si la venta lo deja en nivel crítico). */
+  minimo?: number;
 }
 
 /** Línea en edición dentro del editor de líneas. */
@@ -145,6 +293,9 @@ export interface Venta {
   vencida: boolean;
   motivoAnulacion: string | null;
   cotizacion: string | null;
+  cotizacionId: string | null;
+  /** Solicitud web que originó la cotización (cadena SOL → COT → FAC). */
+  solicitud: { id: string; codigo: string } | null;
   /** Solo en el detalle (GET /sales/:id). */
   items?: LineaDocumento[];
   pagos?: Pago[];
@@ -163,9 +314,15 @@ export interface Cotizacion {
   iva: number;
   total: number;
   estado: EstadoCotizacion;
+  /** Desde cuándo está en el estado actual (para "Pendiente, hace N días"). */
+  estadoDesde: string;
   notas: string;
+  motivoRechazo: string;
   vendedor: string;
   factura: string | null;
+  facturaId: string | null;
+  /** Solicitud web de origen, si la hubo. */
+  solicitud: { id: string; codigo: string } | null;
   items?: LineaDocumento[];
 }
 
@@ -229,6 +386,13 @@ export interface ConsultaWeb {
   producto: string;
   msg: string;
   estado: EstadoConsulta;
+  estadoDesde: string;
+  /** PORTAL = lista de solicitud de un cliente con cuenta; WEB = formulario de contacto. */
+  origen: 'PORTAL' | 'WEB';
+  cliente: { id: string; nombre: string } | null;
+  asignado: string;
+  items: Array<{ prod: string; sku: string; prodN: string; cant: number; nota: string; precio: number; stock: number; minimo: number; activo: boolean }>;
+  cotizacion: { id: string; codigo: string; estado: EstadoCotizacion; total: number; factura: { id: string; codigo: string } | null } | null;
 }
 
 export interface RegistroAuditoria {
@@ -288,6 +452,8 @@ export interface Database {
   proveedores: Proveedor[];
   movimientos: Movimiento[];
   inventarioValor: number;
+  compras: Compra[];
+  comprasResumen: ResumenCompras | null;
   ventas: Venta[];
   cotizaciones: Cotizacion[];
   pagos: Pago[];
@@ -302,3 +468,73 @@ export interface Database {
 
 /** Resultado uniforme de una operación de negocio. */
 export type Result<T = void> = { ok: true; data: T } | { ok: false; error: string };
+
+/* ---------- Portal de clientes (sesión separada del personal) ---------- */
+
+export type Disponibilidad = 'Disponible' | 'Pocas unidades' | 'Bajo pedido';
+
+export interface CuentaCliente {
+  id: string;
+  email: string;
+  contacto: string;
+  telefono: string;
+  cliente: { id: string; nombre: string; ruc: string; telefono: string; direccion: string };
+}
+
+export interface SolicitudPortal {
+  id: string;
+  codigo: string;
+  estado: EstadoConsulta;
+  estadoDesde: string;
+  fecha: string;
+  mensaje: string;
+  items: Array<{ prod: string; sku: string; nombre: string; cant: number; nota: string; disponibilidad: Disponibilidad }>;
+  cotizacion: { id: string; codigo: string; estado: EstadoCotizacion; total: number; validaHasta: string } | null;
+  /** La cotización existe pero el vendedor todavía no la envía (borrador). */
+  enPreparacion: boolean;
+}
+
+export interface CotizacionPortal {
+  id: string;
+  codigo: string;
+  estado: EstadoCotizacion;
+  fecha: string;
+  validaHasta: string;
+  sub: number;
+  iva: number;
+  total: number;
+  notas: string;
+  vendedor: { nombre: string; correo: string };
+  solicitud: { id: string; codigo: string } | null;
+  factura: string | null;
+  items?: Array<{ sku: string; nombre: string; cant: number; precio: number; sub: number }>;
+}
+
+/** Producto del catálogo público (sin costos ni stock exacto). */
+export interface ProductoPublico {
+  id: string;
+  sku: string;
+  nombre: string;
+  descripcion: string;
+  marca: string;
+  categoria: string;
+  categoriaId: string | null;
+  precio: number | null;
+  unidad: string;
+  imagen: string | null;
+  disponibilidad: Disponibilidad;
+  ic: string;
+}
+
+/** Línea de la lista de solicitud de cotización (carrito B2B del catálogo). */
+export interface LineaLista {
+  id: string;
+  nombre: string;
+  sku: string;
+  precio: number | null;
+  disponibilidad: Disponibilidad;
+  categoria: string;
+  imagen: string | null;
+  cant: number;
+  nota: string;
+}
