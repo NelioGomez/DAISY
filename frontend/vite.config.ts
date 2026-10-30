@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       allowedHosts: [
-        'island-existence-boundary-ski.trycloudflare.com',
+        '.trycloudflare.com',
       ],
       // Las llamadas a /api se reenvían al backend NestJS: sin problemas de CORS en desarrollo.
       proxy: {
