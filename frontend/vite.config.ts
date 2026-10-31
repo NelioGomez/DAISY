@@ -8,7 +8,6 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
-      // Salida temporal del frontend a otra URL de Cloudflare Pages (para evitar problemas de CORS en desarrollo).
       allowedHosts: [
         '.trycloudflare.com',
       ],
