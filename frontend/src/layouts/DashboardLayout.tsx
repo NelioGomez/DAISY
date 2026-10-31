@@ -9,13 +9,15 @@ import { SESSION_IDLE_MINUTES } from '../config/security';
 import { readNoticesEnabled, storeNoticesEnabled, useRealtimeNotices } from '../features/realtime/useRealtimeNotices';
 import { useIdleTimeout } from '../hooks/useIdleTimeout';
 import { useModal } from '../components/modals/useModal';
+import { NotificationBell } from '../features/dashboard/NotificationBell';
+import { GlobalSearch } from '../features/search/GlobalSearch';
 import { QuotationFormModal } from '../features/quotations/QuotationFormModal';
 import { useAuth, useData } from '../store/hooks';
 import type { ModuleId } from '../types';
 
 /** Pantallas dentro de un módulo (título propio y breadcrumb). */
 const SUBPAGES: Record<string, string> = {
-  '/app/ventas/nueva': 'Nueva venta (POS)',
+  '/app/ventas/nueva': 'Punto de venta',
 };
 
 function useClock(): string {
@@ -53,6 +55,12 @@ export function DashboardLayout() {
   // Se usa e.code (tecla física) para que funcione con teclado en español.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl + K (o ⌘ + K): búsqueda global (mejora n.° 7).
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyK') {
+        e.preventDefault();
+        modal.open(<GlobalSearch />);
+        return;
+      }
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.code === 'KeyV' && can('sales:write') && can('customers:read')) {
         e.preventDefault();
@@ -98,16 +106,22 @@ export function DashboardLayout() {
         </div>
         <nav className="nav">
           {MENU.map((group) => {
-            const items = group.items.filter((it) => allowed.includes(it.id));
+            const items = group.items.filter((it) => allowed.includes(it.id) && (!it.perm || can(it.perm)));
             if (!items.length) return null;
             return (
               <div key={group.grp}>
                 <div className="nav-group">{group.grp}</div>
                 {items.map((it) => (
-                  <NavLink key={it.id} to={`/app/${it.id}`} onClick={() => setMenuOpen(false)} className={({ isActive }) => (isActive ? 'active' : '')}>
+                  <NavLink
+                    key={it.to ?? it.id}
+                    to={it.to ?? `/app/${it.id}`}
+                    end={it.end}
+                    onClick={() => setMenuOpen(false)}
+                    className={({ isActive }) => (isActive ? 'active' : '')}
+                  >
                     <span className="ic">{it.ic}</span>
                     {it.t}
-                    {!!badges[it.id] && <span className="badge">{badges[it.id]}</span>}
+                    {!it.to && !!badges[it.id] && <span className="badge">{badges[it.id]}</span>}
                   </NavLink>
                 ))}
               </div>
@@ -124,7 +138,7 @@ export function DashboardLayout() {
           <button className="icon-btn menu-toggle" onClick={() => setMenuOpen((o) => !o)} aria-label="Abrir menú">
             ☰
           </button>
-          <div>
+          <div className="tb-title">
             <h1>{sub ?? title}</h1>
             <nav className="crumb" aria-label="Ruta">
               {sub ? (
@@ -147,8 +161,17 @@ export function DashboardLayout() {
               })
             }
           />
+          <button className="search-chip" onClick={() => modal.open(<GlobalSearch />)} aria-label="Buscar en todo el sistema (Ctrl + K)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <span>Buscar…</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+          <NotificationBell />
           <div className="clock">{clock}</div>
-          <button className="icon-btn" title="Catálogo público" aria-label="Catálogo público" onClick={() => navigate('/catalogo')}>
+          <button className="icon-btn tb-site" title="Catálogo público" aria-label="Catálogo público" onClick={() => navigate('/catalogo')}>
             🌐
           </button>
           <div className="userchip">

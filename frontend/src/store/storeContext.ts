@@ -19,11 +19,16 @@ import type {
   TipoMovimiento,
   Venta,
 } from '../types';
+import type { Unidad } from '../utils/units';
 
 export interface ProductoInput {
   sku: string;
+  /** '' = sin código de barras. */
+  codigoBarras: string;
   nombre: string;
   descripcion: string;
+  /** Unidad de control del stock (UNIT, FOOT…). */
+  unidad: Unidad;
   categoriaId: string | null;
   marcaId: string | null;
   /** Solo se envía si cambió y el rol tiene prices:write (Administración / Gerencia). */
@@ -100,7 +105,8 @@ export interface DataActions {
   guardarProducto(id: string | null, data: ProductoInput): Promise<Result>;
   cambiarEstadoProducto(id: string, activo: boolean): Promise<Result>;
   registrarMovimiento(data: MovimientoInput): Promise<Result<{ sku: string; stock: number }>>;
-  guardarCliente(id: string | null, data: ClienteInput): Promise<Result>;
+  /** Devuelve el id del cliente (nuevo o editado). */
+  guardarCliente(id: string | null, data: ClienteInput): Promise<Result<string>>;
   guardarProveedor(id: string | null, data: ProveedorInput): Promise<Result>;
   crearCotizacion(cliId: string, lines: CartLine[], notas: string): Promise<Result<{ id: string; codigo: string }>>;
   cambiarEstadoCotizacion(id: string, accion: 'submit' | 'approve' | 'reject', motivo?: string): Promise<Result>;
@@ -143,6 +149,11 @@ export interface DataActions {
   reactivarReposicion(productoId: string): Promise<Result>;
 
   refresh(keys: RefreshKey[]): Promise<void>;
+  /**
+   * Ejecuta una operación de un módulo que trae sus propios datos (p. ej. Producción) y
+   * recarga las colecciones indicadas, igual que las demás acciones del store.
+   */
+  ejecutar<T>(fn: () => Promise<T>, keys: RefreshKey[]): Promise<Result<T>>;
 }
 
 export type LoginResult = { ok: true; user: SessionUser } | LoginFailure;

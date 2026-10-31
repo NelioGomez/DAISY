@@ -16,10 +16,10 @@ export const ROLES: Record<RoleKey, RoleInfo> = {
 
 /** Módulos visibles por rol. El primero es la vista inicial al iniciar sesión. */
 export const ACCESS: Record<RoleKey, ModuleId[]> = {
-  admin: ['dashboard', 'productos', 'inventario', 'compras', 'clientes', 'proveedores', 'cotizaciones', 'ventas', 'pagos', 'ordenes', 'reportes', 'catalogo', 'consultas', 'auditoria'],
-  gerencia: ['dashboard', 'reportes', 'inventario', 'compras', 'ventas', 'auditoria'],
+  admin: ['dashboard', 'productos', 'inventario', 'compras', 'produccion', 'clientes', 'proveedores', 'cotizaciones', 'ventas', 'pagos', 'ordenes', 'reportes', 'catalogo', 'consultas', 'auditoria'],
+  gerencia: ['dashboard', 'reportes', 'inventario', 'compras', 'produccion', 'ventas', 'auditoria'],
   vendedor: ['dashboard', 'clientes', 'cotizaciones', 'ventas', 'catalogo', 'consultas'],
-  inventario: ['dashboard', 'productos', 'inventario', 'compras', 'proveedores'],
+  inventario: ['dashboard', 'productos', 'inventario', 'compras', 'produccion', 'proveedores'],
   contabilidad: ['dashboard', 'ventas', 'pagos', 'compras', 'reportes'],
   tecnico: ['dashboard', 'ordenes'],
 };
@@ -28,6 +28,12 @@ export interface MenuItem {
   id: ModuleId;
   t: string;
   ic: string;
+  /** Ruta propia dentro del módulo (p. ej. el punto de venta dentro de Ventas). */
+  to?: string;
+  /** Permiso adicional para mostrar la entrada. */
+  perm?: string;
+  /** Activo solo con la ruta exacta (para no marcarse junto a sus subpantallas). */
+  end?: boolean;
 }
 
 export interface MenuGroup {
@@ -40,11 +46,13 @@ export const MENU: MenuGroup[] = [
     grp: 'Operación',
     items: [
       { id: 'dashboard', t: 'Dashboard', ic: '▦' },
+      { id: 'ventas', t: 'Punto de venta', ic: '⊞', to: '/app/ventas/nueva', perm: 'sales:write' },
       { id: 'productos', t: 'Productos', ic: '▣' },
       { id: 'inventario', t: 'Inventario', ic: '▤' },
       { id: 'compras', t: 'Compras', ic: '⇩' },
+      { id: 'produccion', t: 'Producción', ic: '⚙' },
       { id: 'cotizaciones', t: 'Cotizaciones', ic: '▥' },
-      { id: 'ventas', t: 'Ventas y Facturación', ic: '▧' },
+      { id: 'ventas', t: 'Ventas y Facturación', ic: '▧', end: true },
       { id: 'pagos', t: 'Pagos y CxC', ic: '▨' },
       { id: 'ordenes', t: 'Órdenes OPI', ic: '▩' },
     ],
@@ -72,6 +80,7 @@ export const TITLES: Record<ModuleId, [string, string]> = {
   productos: ['Productos', 'Catálogo interno de repuestos'],
   inventario: ['Inventario', 'Movimientos y control de existencias'],
   compras: ['Compras', 'Órdenes de compra, recepción y reabastecimiento'],
+  produccion: ['Producción', 'BOM, órdenes de producción, lotes y control de calidad'],
   clientes: ['Clientes', 'Cartera de clientes'],
   proveedores: ['Proveedores', 'Proveedores nacionales e internacionales'],
   cotizaciones: ['Cotizaciones', 'Proformas y conversión a venta'],
@@ -95,6 +104,7 @@ export const MODULE_PERMISSION: Record<ModuleId, string> = {
   productos: 'products:read',
   inventario: 'inventory:read',
   compras: 'purchases:read',
+  produccion: 'production:read',
   clientes: 'customers:read',
   proveedores: 'suppliers:read',
   cotizaciones: 'quotations:read',
