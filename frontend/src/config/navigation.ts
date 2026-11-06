@@ -3,16 +3,17 @@
    IMPORTANTE: ocultar módulos aquí solo mejora la experiencia; la
    autorización real debe aplicarse en NestJS con guards por rol.
    ===================================================================== */
+import type { IconName } from '../components/common/Icon';
 import type { RefreshKey } from '../store/storeContext';
 import type { ModuleId, RoleInfo, RoleKey } from '../types';
 
 export const ROLES: Record<RoleKey, RoleInfo> = {
-  admin: { name: 'Administrador', user: 'admin', desc: 'Acceso total', color: '#6b54c4' },
-  gerencia: { name: 'Gerencia', user: 'gerencia', desc: 'Dashboard y reportes', color: '#2f6fb0' },
-  vendedor: { name: 'Vendedor', user: 'jflores', desc: 'Ventas y clientes', color: '#1f9d5a' },
-  inventario: { name: 'Enc. Inventario', user: 'ngomez', desc: 'Productos e inventario', color: '#c97f00' },
-  contabilidad: { name: 'Contabilidad', user: 'eurcuyo', desc: 'Pagos y facturación', color: '#b32a20' },
-  tecnico: { name: 'Técnico / OPI', user: 'tecnico', desc: 'Órdenes de servicio', color: '#205283' },
+  admin: { name: 'Administrador', color: '#6b54c4' },
+  gerencia: { name: 'Gerencia', color: '#2f6fb0' },
+  vendedor: { name: 'Vendedor', color: '#1f9d5a' },
+  inventario: { name: 'Enc. Inventario', color: '#c97f00' },
+  contabilidad: { name: 'Contabilidad', color: '#b32a20' },
+  tecnico: { name: 'Técnico / OPI', color: '#205283' },
 };
 
 /** Módulos visibles por rol. El primero es la vista inicial al iniciar sesión. */
@@ -25,55 +26,99 @@ export const ACCESS: Record<RoleKey, ModuleId[]> = {
   tecnico: ['dashboard', 'ordenes'],
 };
 
+/** Contadores (avisos) que puede mostrar una entrada del menú. */
+export type MenuBadge = 'criticos' | 'comprasPorRecibir' | 'cotizacionesPendientes' | 'cxc' | 'consultasNuevas';
+
 export interface MenuItem {
+  /** Módulo de la pantalla: define el permiso y la ruta (/app/<id>). */
   id: ModuleId;
   t: string;
-  ic: string;
+  /** Ícono SVG del menú (mejora n.° 62). */
+  ic: IconName;
+  /** Nombre cuando es la única pantalla visible de su módulo (se muestra como enlace directo). */
+  solo?: string;
   /** Ruta propia dentro del módulo (p. ej. el punto de venta dentro de Ventas). */
   to?: string;
+  /** Pestaña del módulo (?tab=…) que abre la entrada. */
+  tab?: string;
+  /** Es la pestaña por defecto: se marca también cuando la dirección no trae ?tab. */
+  tabDefault?: boolean;
   /** Permiso adicional para mostrar la entrada. */
   perm?: string;
   /** Activo solo con la ruta exacta (para no marcarse junto a sus subpantallas). */
   end?: boolean;
+  /** Aviso que se muestra junto al nombre. */
+  badge?: MenuBadge;
 }
 
-export interface MenuGroup {
-  grp: string;
+/** Módulo desplegable del menú: agrupa sus pantallas. */
+export interface MenuSection {
+  key: string;
+  t: string;
+  ic: IconName;
   items: MenuItem[];
 }
 
-export const MENU: MenuGroup[] = [
+export type MenuEntry = MenuItem | MenuSection;
+
+export const isSection = (e: MenuEntry): e is MenuSection => 'items' in e;
+
+/**
+ * Menú por módulos desplegables (mejora n.° 55), con la distribución acordada en clase:
+ * 1. Compras (productos, pedidos, proveedores e inventario) · 2. Ventas (clientes, cotizaciones,
+ * ventas y facturación, órdenes de servicio y canal web) · 3. Pagos y CxC · 4. Dashboard (panel,
+ * reportes y KPI). Producción y Auditoría van aparte. Si un rol ve una sola pantalla de un módulo,
+ * esa pantalla se muestra como enlace directo.
+ */
+export const MENU: MenuEntry[] = [
   {
-    grp: 'Operación',
+    key: 'dashboard',
+    t: 'Dashboard',
+    ic: 'layout-dashboard',
     items: [
-      { id: 'dashboard', t: 'Dashboard', ic: '▦' },
-      { id: 'ventas', t: 'Punto de venta', ic: '⊞', to: '/app/ventas/nueva', perm: 'sales:write' },
-      { id: 'productos', t: 'Productos', ic: '▣' },
-      { id: 'inventario', t: 'Inventario', ic: '▤' },
-      { id: 'compras', t: 'Compras', ic: '⇩' },
-      { id: 'produccion', t: 'Producción', ic: '⚙' },
-      { id: 'cotizaciones', t: 'Cotizaciones', ic: '▥' },
-      { id: 'ventas', t: 'Ventas y Facturación', ic: '▧', end: true },
-      { id: 'pagos', t: 'Pagos y CxC', ic: '▨' },
-      { id: 'ordenes', t: 'Órdenes OPI', ic: '▩' },
+      { id: 'dashboard', t: 'Panel e indicadores', solo: 'Dashboard', ic: 'gauge' },
+      { id: 'reportes', t: 'Reportes y KPIs', ic: 'chart-column' },
     ],
   },
   {
-    grp: 'Catálogos',
+    key: 'compras',
+    t: 'Compras',
+    ic: 'shopping-cart',
     items: [
-      { id: 'clientes', t: 'Clientes', ic: '◧' },
-      { id: 'proveedores', t: 'Proveedores', ic: '◨' },
-      { id: 'consultas', t: 'Consultas web', ic: '◫' },
+      { id: 'productos', t: 'Productos', ic: 'package' },
+      { id: 'compras', t: 'Pedidos de compra', ic: 'clipboard-list', tab: 'ordenes', tabDefault: true, badge: 'comprasPorRecibir' },
+      { id: 'compras', t: 'Reabastecimiento', ic: 'refresh-cw', tab: 'reabastecimiento' },
+      { id: 'proveedores', t: 'Proveedores', ic: 'truck' },
+      { id: 'inventario', t: 'Inventario', ic: 'warehouse', badge: 'criticos' },
     ],
   },
   {
-    grp: 'Análisis y Control',
+    key: 'ventas',
+    t: 'Ventas',
+    ic: 'badge-dollar-sign',
     items: [
-      { id: 'reportes', t: 'Reportes y KPIs', ic: '◩' },
-      { id: 'catalogo', t: 'Catálogo web', ic: '◪' },
-      { id: 'auditoria', t: 'Auditoría', ic: '◎' },
+      { id: 'clientes', t: 'Clientes', ic: 'users' },
+      { id: 'cotizaciones', t: 'Cotizaciones', ic: 'file-text', badge: 'cotizacionesPendientes' },
+      { id: 'ventas', t: 'Punto de venta', ic: 'scan-barcode', to: '/app/ventas/nueva', perm: 'sales:write' },
+      { id: 'ventas', t: 'Ventas y facturación', ic: 'receipt', end: true },
+      { id: 'ordenes', t: 'Órdenes de servicio', ic: 'wrench' },
+      { id: 'consultas', t: 'Consultas web', ic: 'inbox', badge: 'consultasNuevas' },
+      { id: 'catalogo', t: 'Catálogo web', ic: 'globe' },
     ],
   },
+  { id: 'pagos', t: 'Pagos y CxC', ic: 'wallet', badge: 'cxc' },
+  {
+    key: 'produccion',
+    t: 'Producción',
+    ic: 'factory',
+    items: [
+      { id: 'produccion', t: 'Órdenes de producción', ic: 'cog', tab: 'ordenes', tabDefault: true },
+      { id: 'produccion', t: 'Lotes y calidad', ic: 'list-checks', tab: 'lotes' },
+      { id: 'produccion', t: 'Listas de materiales', ic: 'layers', tab: 'bom' },
+      { id: 'produccion', t: 'Rutas de producción', ic: 'route', tab: 'rutas' },
+    ],
+  },
+  { id: 'auditoria', t: 'Auditoría', ic: 'history' },
 ];
 
 export const TITLES: Record<ModuleId, [string, string]> = {
@@ -94,8 +139,6 @@ export const TITLES: Record<ModuleId, [string, string]> = {
   consultas: ['Consultas Web', 'Solicitudes de clientes desde el sitio'],
 };
 
-export const ROLE_KEYS = Object.keys(ROLES) as RoleKey[];
-export const MODULE_COUNT = MENU.reduce((n, g) => n + g.items.length, 0);
 
 export const isModuleId = (v: string | undefined): v is ModuleId => !!v && v in TITLES;
 
