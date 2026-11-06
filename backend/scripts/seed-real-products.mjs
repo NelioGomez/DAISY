@@ -37,20 +37,82 @@ const UPDATE_EXISTING = String(process.env.SEED_UPDATE_EXISTING ?? 'true').toLow
 
 let token = '';
 
-async function call(method, path, body, { allowConflict = false } = {}) {
+const REQUEST_DELAY_MS = Number(
+  process.env.SEED_REQUEST_DELAY_MS ?? 700
+);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeSku(value) {
+  return String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^A-Z0-9._/-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function call(
+  method,
+  path,
+  body,
+  { allowConflict = false, retry = 0 } = {},
+) {
+  // Evita superar el límite global de 100 peticiones/minuto
+  await sleep(REQUEST_DELAY_MS);
+
   const res = await fetch(API + path, {
     method,
     headers: {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      ...(token && {
+        Authorization: `Bearer ${token}`,
+      }),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
+
   const json = await res.json().catch(() => ({}));
-  if (res.status === 409 && allowConflict) return null;
-  if (!res.ok) {
-    throw new Error(`${method} ${path} → ${res.status}: ${json.message ?? 'Error'} ${JSON.stringify(json.errors ?? [])}`);
+
+  if (res.status === 409 && allowConflict) {
+    return null;
   }
+
+  // Si NestJS activa el Throttler, esperamos y reintentamos.
+  if (res.status === 429 && retry < 5) {
+    const retryAfterHeader = Number(
+      res.headers.get('retry-after'),
+    );
+
+    const retryAfterMs =
+      Number.isFinite(retryAfterHeader) &&
+      retryAfterHeader > 0
+        ? retryAfterHeader * 1000
+        : 10_000;
+
+    console.log(
+      `⏳ Límite de peticiones alcanzado. Reintentando ${method} ${path}...`,
+    );
+
+    await sleep(retryAfterMs);
+
+    return call(method, path, body, {
+      allowConflict,
+      retry: retry + 1,
+    });
+  }
+
+  if (!res.ok) {
+    throw new Error(
+      `${method} ${path} → ${res.status}: ${
+        json.message ?? 'Error'
+      } ${JSON.stringify(json.errors ?? [])}`,
+    );
+  }
+
   return json.data;
 }
 
@@ -68,10 +130,10 @@ async function all(path, limit = 100) {
 
 function productBody(p, brandIds, categoryIds) {
   return {
-    sku: p.sku,
+    sku: normalizeSku(p.sku),
     name: p.name,
     description: p.description || undefined,
-    unit: p.unit ?? 'UNIT',
+    unit: p.unit ?? 'UNIT', 
     brandId: brandIds[p.brand] ?? null,
     categoryId: categoryIds[p.category] ?? null,
     imageUrl: p.imageUrl ?? null,
@@ -123,10 +185,11 @@ async function main() {
     if (p.imageUrl) imageCount++;
     if (p.salePrice > 0) priceCount++;
 
-    let current = existing[p.sku];
+    let current = existing[body.sku];
+
     if (!current) {
       current = await call('POST', '/products', body);
-      existing[p.sku] = current;
+      existing[body.sku] = current;
       created++;
 
       if (p.stock > 0) {
