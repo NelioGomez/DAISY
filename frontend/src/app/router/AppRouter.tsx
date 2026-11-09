@@ -1,5 +1,5 @@
 /* Rutas de la aplicación.
-   /                    → sitio público: Inicio, /catalogo, /catalogo/:id, /nosotros, /contacto
+   /                    → sitio público: Inicio, /catalogo, /catalogo/:id, /catalogo/comparar, /nosotros, /contacto
    /clientes/...        → acceso y portal de clientes (sesión propia, separada del personal)
    /login, /recuperar   → acceso interno del personal
    /app/:módulo         → panel interno protegido por sesión y rol */
@@ -16,6 +16,7 @@ import { QuotationDetailPage } from '../../features/portal/QuotationDetailPage';
 import { RequireCustomer } from '../../features/portal/RequireCustomer';
 import { AboutPage } from '../../features/public/AboutPage';
 import { CatalogPage } from '../../features/public/CatalogPage';
+import { ComparePage } from '../../features/public/ComparePage';
 import { ContactPage } from '../../features/public/ContactPage';
 import { HomePage } from '../../features/public/HomePage';
 import { NotFoundPage } from '../../features/public/NotFoundPage';
@@ -48,6 +49,7 @@ const ReportsPage = page(() => import('../../features/reports/ReportsPage'), 'Re
 const CatalogInternalPage = page(() => import('../../features/catalog/CatalogInternalPage'), 'CatalogInternalPage');
 const WebInquiriesPage = page(() => import('../../features/web-inquiries/WebInquiriesPage'), 'WebInquiriesPage');
 const AuditPage = page(() => import('../../features/audit/AuditPage'), 'AuditPage');
+const DocsPage = page(() => import('../../features/docs/DocsPage'), 'DocsPage');
 
 const staff = (el: ReactElement) => <Suspense fallback={<FullScreenLoader text="Cargando SIVEN…" />}>{el}</Suspense>;
 
@@ -68,6 +70,7 @@ const MODULE_PAGES: Record<ModuleId, ReactElement> = {
   catalogo: <CatalogInternalPage />,
   consultas: <WebInquiriesPage />,
   auditoria: <AuditPage />,
+  documentacion: <DocsPage />,
 };
 
 export function AppRouter() {
@@ -76,6 +79,7 @@ export function AppRouter() {
       <Route element={<PublicLayout />}>
         <Route index element={<HomePage />} />
         <Route path="catalogo" element={<CatalogPage />} />
+        <Route path="catalogo/comparar" element={<ComparePage />} />
         <Route path="catalogo/:id" element={<ProductPage />} />
         <Route path="nosotros" element={<AboutPage />} />
         <Route path="contacto" element={<ContactPage />} />

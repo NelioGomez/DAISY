@@ -1,4 +1,4 @@
-/* Alta y edición de productos (datos maestros).
+/* Alta y edición de productos (datos maestros) con su foto (mejora n.° 4).
    El costo promedio y el stock NO se editan aquí: los calcula el servidor a
    partir de los movimientos de inventario (corrección P0 del análisis UX). */
 import { useState } from 'react';
@@ -10,9 +10,11 @@ import { useAuth, useData } from '../../store/hooks';
 import type { Producto } from '../../types';
 import { money } from '../../utils/format';
 import { UNIDADES, type Unidad } from '../../utils/units';
+import { plazoGarantia } from '../../utils/warranty';
+import { ProductPhotoField, type PendingPhoto } from './ProductPhotoField';
 
 export function ProductFormModal({ producto }: { producto?: Producto }) {
-  const { db, guardarProducto, cambiarEstadoProducto } = useData();
+  const { db, guardarProducto, cambiarEstadoProducto, fotoProducto } = useData();
   const { can } = useAuth();
   // El precio comercial lo fijan Administración y Gerencia; el resto da de alta sin precio.
   const canPrice = can('prices:write');
@@ -20,6 +22,7 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
   const { close } = useModal();
   const p = producto;
   const [saving, setSaving] = useState(false);
+  const [foto, setFoto] = useState<PendingPhoto | null>(null);
   const [f, setF] = useState({
     sku: p?.sku ?? '',
     codigoBarras: p?.codigoBarras ?? '',
@@ -32,6 +35,7 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
     precio: String(p?.precio ?? ''),
     stockMin: String(p?.stockMin ?? 0),
     stockMax: p?.stockMax !== null && p?.stockMax !== undefined ? String(p.stockMax) : '',
+    garantia: p?.garantiaDias ? String(p.garantiaDias) : '',
     motivoPrecio: '',
     activo: p?.activo ?? true,
   });
@@ -43,6 +47,10 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
     const stockMin = Math.max(0, Math.round(Number(f.stockMin) || 0));
     const stockMax = f.stockMax.trim() === '' ? null : Math.max(0, Math.round(Number(f.stockMax) || 0));
     if (stockMax !== null && stockMax < stockMin) return toast('El stock máximo no puede ser menor que el mínimo', 'err');
+    const garantiaDias = f.garantia.trim() === '' || Number(f.garantia) === 0 ? null : Number(f.garantia);
+    if (garantiaDias !== null && (!Number.isInteger(garantiaDias) || garantiaDias < 1 || garantiaDias > 3650)) {
+      return toast('La garantía va en días enteros, de 1 a 3650 (déjela vacía si el producto no tiene)', 'err');
+    }
     const precio = Number(f.precio);
     const cambiaPrecio = canPrice && (!p || precio !== p.precio);
     setSaving(true);
@@ -51,14 +59,21 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
       codigoBarras: f.codigoBarras.trim(),
       nombre: f.nombre.trim(),
       descripcion: f.descripcion.trim(),
-      imagen: f.imagen.trim(),
+      // Con una foto nueva pendiente se conserva la actual hasta que la API la reemplace.
+      imagen: foto ? (p?.imagen ?? '') : f.imagen.trim(),
       unidad: f.unidad,
       categoriaId: f.categoriaId || null,
       marcaId: f.marcaId || null,
       ...(cambiaPrecio && { precio, motivoPrecio: f.motivoPrecio.trim() || undefined }),
       stockMin,
       stockMax,
+      garantiaDias,
     });
+    let avisoFoto = '';
+    if (r.ok && foto) {
+      const subida = await fotoProducto(r.data, foto.blob);
+      if (!subida.ok) avisoFoto = subida.error;
+    }
     if (r.ok && p && f.activo !== p.activo) {
       const s = await cambiarEstadoProducto(p.id, f.activo);
       if (!s.ok) {
@@ -68,7 +83,8 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
     }
     setSaving(false);
     if (!r.ok) return toast(r.error, 'err');
-    toast(p ? 'Producto actualizado' : 'Producto creado', 'ok');
+    if (avisoFoto) toast(`${p ? 'Producto actualizado' : 'Producto creado'}, pero la foto no se subió: ${avisoFoto}`, 'err');
+    else toast(p ? 'Producto actualizado' : 'Producto creado', 'ok');
     close();
   };
 
@@ -85,6 +101,7 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
       }
     >
       <div className="form-grid">
+        <ProductPhotoField imagen={f.imagen} onImagen={set('imagen')} pendiente={foto} onPendiente={setFoto} fallback={p?.ic ?? '▣'} />
         <InputField label="SKU" value={f.sku} onChange={set('sku')} placeholder="Ej: DSP-NZL-13" help="Letras, números, punto, guion o diagonal" />
         <Field label="Marca">
           <select value={f.marcaId} onChange={(e) => set('marcaId')(e.target.value)}>
@@ -142,6 +159,18 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
           placeholder="Opcional"
           help="El panel de reabastecimiento sugiere comprar hasta este nivel"
         />
+        <InputField
+          label="Garantía (días)"
+          type="number"
+          value={f.garantia}
+          onChange={set('garantia')}
+          placeholder="Sin garantía"
+          help={
+            Number(f.garantia) >= 1
+              ? `${plazoGarantia(Math.round(Number(f.garantia)))} desde la venta: permite registrar órdenes de servicio en garantía`
+              : 'Ej.: 365 = 1 año. Se muestra en el catálogo y habilita las OPI en garantía'
+          }
+        />
         {p && (
           <Field label="Estado">
             <select value={f.activo ? '1' : '0'} onChange={(e) => setF((s) => ({ ...s, activo: e.target.value === '1' }))}>
@@ -150,14 +179,6 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
             </select>
           </Field>
         )}
-        <InputField
-          label="Imagen del producto"
-          value={f.imagen}
-          onChange={set('imagen')}
-          placeholder="/product-images/catalogo/image2.png o https://..."
-          help="Use una ruta pública del frontend o una URL http(s)."
-          full
-        />
         <Field label="Descripción" full>
           <textarea rows={2} value={f.descripcion} onChange={(e) => set('descripcion')(e.target.value)} />
         </Field>
@@ -170,7 +191,7 @@ export function ProductFormModal({ producto }: { producto?: Producto }) {
               Existencia actual: <b>{p.stock}</b> · costo promedio: <b>{money(p.costo)}</b>. Ambos cambian solo con movimientos de Inventario.
             </>
           ) : (
-            <>El producto se crea sin existencias. Registre una entrada en Inventario para darle stock y costo.</>
+            <>El producto se crea sin existencias: su stock y su costo llegan al recibir una compra en Compras.</>
           )}
         </div>
       </div>

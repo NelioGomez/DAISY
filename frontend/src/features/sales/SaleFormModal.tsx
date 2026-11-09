@@ -1,24 +1,27 @@
 /* Conversión de una cotización aprobada en venta (las ventas nuevas se hacen en la pantalla POS).
    Dos pasos: condiciones de pago → resumen con advertencias de stock → confirmar (mejora n.° 26).
-   El servidor valida stock, calcula impuestos, descuenta inventario y registra el pago inicial. */
+   El servidor valida stock, calcula impuestos, descuenta inventario y registra el pago inicial.
+   Si la cotización sigue Pendiente (se arrastró de Pendiente a Convertida en el pipeline, mejora
+   n.° 58), al confirmar primero se aprueba y luego se convierte. */
 import { useState } from 'react';
 import { useToast } from '../../components/feedback/useToast';
 import { CancelButton, Modal } from '../../components/modals/Modal';
-import { useModal } from '../../components/modals/useModal';
 import { useData } from '../../store/hooks';
 import type { CondicionesPago } from '../../store/storeContext';
 import type { Cotizacion } from '../../types';
 import { money } from '../../utils/format';
-import { InvoiceModal } from './InvoiceModal';
 import { PaymentTermsFields } from './PaymentTermsFields';
 import { buildTerms, initialTerms } from './paymentTerms';
 import { SaleSummary } from './SaleSummary';
 import { stockWarnings, type SummaryLine } from './stockWarnings';
+import { useRecords } from '../records/records';
 
 export function SaleFormModal({ cotizacion }: { cotizacion: Cotizacion }) {
-  const { convertirCotizacion } = useData();
+  const { convertirCotizacion, cambiarEstadoCotizacion } = useData();
+  // Pendiente → se aprueba una sola vez, aunque la conversión falle y se reintente.
+  const [aprobarAntes, setAprobarAntes] = useState(cotizacion.estado === 'Pendiente');
   const toast = useToast();
-  const modal = useModal();
+  const { openRecord } = useRecords();
   const [terms, setTerms] = useState(initialTerms);
   const [resumen, setResumen] = useState<CondicionesPago | null>(null);
   const [saving, setSaving] = useState(false);
@@ -45,11 +48,19 @@ export function SaleFormModal({ cotizacion }: { cotizacion: Cotizacion }) {
   const confirmar = async () => {
     if (!resumen) return;
     setSaving(true);
+    if (aprobarAntes) {
+      const a = await cambiarEstadoCotizacion(cotizacion.id, 'approve');
+      if (!a.ok) {
+        setSaving(false);
+        return toast(a.error, 'err');
+      }
+      setAprobarAntes(false);
+    }
     const r = await convertirCotizacion(cotizacion.id, resumen);
     setSaving(false);
     if (!r.ok) return toast(r.error, 'err');
     toast(`Venta ${r.data.factura} registrada desde ${cotizacion.codigo}`, 'ok');
-    modal.open(<InvoiceModal ventaId={r.data.ventaId} />);
+    openRecord('venta', r.data.ventaId);
   };
 
   return (
@@ -76,6 +87,14 @@ export function SaleFormModal({ cotizacion }: { cotizacion: Cotizacion }) {
         )
       }
     >
+      {aprobarAntes && (
+        <div className="note" style={{ marginBottom: 12 }}>
+          <span className="ic">ℹ️</span>
+          <div>
+            {cotizacion.codigo} sigue <b>Pendiente</b>: al confirmar la venta se aprueba y se convierte en un solo paso.
+          </div>
+        </div>
+      )}
       {resumen ? (
         <SaleSummary cliente={cotizacion.cliN} lines={lines} totals={totals} terms={resumen} />
       ) : (

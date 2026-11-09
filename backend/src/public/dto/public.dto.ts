@@ -1,8 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
 import { SortOrder } from '../../common/dto/sort-order.enum';
 import { trim } from '../../common/transformers/text.transformers';
+import { InquiryType } from '../../generated/prisma/client';
 
 export enum Availability {
   AVAILABLE = 'AVAILABLE',
@@ -119,9 +120,28 @@ export class CreateInquiryDto {
   @MaxLength(1000)
   message?: string;
 
+  @ApiPropertyOptional({ enum: InquiryType, default: InquiryType.QUOTE, description: 'Motivo: cotización, servicio técnico o garantía, cuenta, reclamo u otra' })
+  @IsOptional()
+  @IsEnum(InquiryType, { message: 'Motivo inválido' })
+  type?: InquiryType;
+
   @ApiPropertyOptional({ description: 'Campo trampa anti-bots: debe ir vacío u omitido' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
   website?: string;
+}
+
+
+/** Comparador de productos (mejora n.° 38): de 2 a 4 productos, separados por coma. */
+export class CompareProductsDto {
+  @ApiProperty({ description: 'Ids de 2 a 4 productos separados por coma', example: 'uuid1,uuid2' })
+  @Transform(({ value }: { value: unknown }) =>
+    [...new Set(String(value ?? '').split(',').map((s) => s.trim()).filter(Boolean))],
+  )
+  @IsArray()
+  @ArrayMinSize(2, { message: 'Elija al menos 2 productos para comparar' })
+  @ArrayMaxSize(4, { message: 'Se comparan hasta 4 productos a la vez' })
+  @IsUUID('all', { each: true, message: 'Identificador de producto inválido' })
+  ids!: string[];
 }

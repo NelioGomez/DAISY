@@ -175,7 +175,7 @@ sesión de los clientes). Los datos de contacto del sitio público se guardan co
 En el sistema interno: **Ctrl + K** abre la búsqueda global, **Alt + V** el punto de venta, **Alt + C** una
 cotización nueva y **Esc** cierra ventanas y paneles. Cotizaciones tiene vista de tabla y de pipeline.
 
-**Punto de venta** (menú Operación → Punto de venta): acepta lector de código de barras (el código se
+**Punto de venta** (menú Ventas → Punto de venta): acepta lector de código de barras (el código se
 registra en el formulario del producto; el lector escribe el código y Enter), SKU exacto o búsqueda por nombre.
 Atajos: **F2** buscar producto, **F4** cliente, **F9** cobrar. Permite crear un cliente sin salir, calcula el
 vuelto en ventas de contado y la factura se puede imprimir. El efectivo recibido no se guarda en la base de
@@ -297,6 +297,192 @@ filas (Kardex y Auditoría se paginan y filtran en el servidor), encabezados fij
 | `POST /purchases/:id/receive` (campo `locationId`) | `purchases:write` | Recibir en la bodega (por defecto) o la sucursal |
 | `GET /inventory/movements?locationId=` | `inventory:read` | Kardex filtrado por ubicación |
 | `GET /products` (campo `stockByLocation`) | `products:read` | Existencia en cada ubicación |
+
+## Fotos, columnas, panel lateral, vista previa y comparador (mejoras 4, 21, 32-34 y 38)
+
+No hay migración nueva. Desde la carpeta `backend`:
+
+```powershell
+npx prisma generate
+npm run start:dev
+npm run seed:real      # opcional: 173 productos reales con sus imágenes
+```
+
+> Si al iniciar aparecen errores como `Property 'stockTransfer' does not exist` o
+> `has no exported member 'StockTransferGetPayload'`, falta regenerar el cliente de Prisma:
+> detenga `start:dev`, ejecute `npx prisma generate` (y `npx prisma migrate deploy`) y vuelva a iniciar.
+
+**Fotografías (n.° 4).** En el formulario del producto: *Subir foto* (o arrastrarla), *Cambiar* y *Quitar*,
+con vista previa. El navegador la reduce a 1200 px (WebP) antes de subirla; la API acepta JPG, PNG o WebP de
+hasta 2 MB, reconoce el formato por el contenido del archivo y le pone un nombre propio. Se guardan en
+`backend/uploads/products` (`UPLOADS_DIR` para otra carpeta; no va al repositorio) y se sirven en
+`/api/v1/uploads/products/…`. Al reemplazar o quitar una foto subida, el archivo anterior se borra. También se
+puede usar una imagen del catálogo del equipo (`/product-images/catalogo/…`) o una URL http(s). La foto
+aparece en Productos, Existencias, la ficha, el punto de venta, la búsqueda global, el catálogo interno y el
+sitio público; sin foto se muestra el ícono de la categoría.
+
+**Columnas configurables (n.° 21).** Botón *Columnas* en Productos, Existencias, Kardex, Compras,
+Cotizaciones, Ventas, Clientes y Proveedores: mostrar u ocultar y mover a la izquierda o a la derecha.
+Cada tabla recuerda su configuración en el navegador; *Restablecer* vuelve al orden original. Hay columnas
+extra ocultas de inicio (código de barras, bodega/sucursal, vendedor, vence, notas…).
+
+**Ruta de navegación y panel lateral (n.° 32 y 33).** Todo detalle se abre en un panel lateral sin salir de la
+lista: facturas, cotizaciones, solicitudes, compras, órdenes de producción, lotes, traslados, productos,
+clientes y **proveedores** (nuevo: compras, productos que surte y último costo). La barra superior muestra
+`Inicio › Módulo › Registro` (p. ej. *Inicio › Ventas y Facturación › Factura FAC-000125*) y cada registro
+tiene dirección propia (`/app/ventas?venta=<id>`, `?producto=`, `?proveedor=`…): se puede copiar, recargar, y
+Atrás/Esc cierran el panel. En pantallas de 1440 px o más la lista queda a la izquierda y sigue usable
+(vista dividida); en pantallas menores el panel se superpone debajo de la barra superior.
+
+**Vista previa rápida (n.° 34).** En el sistema, al detener el cursor (o enfocar con el teclado) sobre un
+producto o un cliente aparece una tarjeta con foto, SKU, precio y existencias por ubicación, o contacto,
+total comprado y saldo. En el catálogo público, *Vista rápida* abre el producto sin salir de la lista.
+
+**Comparador (n.° 38).** En el catálogo público, *Comparar* en hasta 4 productos; la barra inferior lleva a
+`/catalogo/comparar?ids=…`: foto, precio (marca el menor), disponibilidad, marca, categoría, unidad y
+descripción lado a lado, con *Resaltar diferencias* y *Solo lo que cambia*.
+
+| Método y ruta | Permiso | Uso |
+| --- | --- | --- |
+| `POST /products/:id/image` (multipart, campo `file`) | `products:write` | Sube o reemplaza la foto |
+| `DELETE /products/:id/image` | `products:write` | Quita la foto |
+| `GET /uploads/products/:archivo` | público | Archivo de la foto (caché de 30 días) |
+| `GET /suppliers/:id/summary` | `suppliers:read` | Panel del proveedor: compras, productos e indicadores |
+| `GET /public/products/compare?ids=a,b,c` | público | Comparación de 2 a 4 productos y sus diferencias |
+| `GET /search?q=` (campo `imageUrl`) | según módulo | La búsqueda global trae la foto del producto |
+
+## Menú por módulos, celular, inventario y pipeline con arrastre (mejoras 55-58)
+
+Solo cambia el frontend (no hay migración ni endpoints nuevos): `npm run dev` en `frontend`.
+
+**Menú por módulos desplegables (n.° 55).** El menú lateral sigue la distribución acordada en clase:
+*Dashboard* (panel e indicadores, reportes y KPIs) · *Compras* (productos, pedidos de compra,
+reabastecimiento, proveedores e inventario) · *Ventas* (clientes, cotizaciones, punto de venta, ventas y
+facturación, órdenes de servicio OPI, consultas y catálogo web) · *Pagos y CxC* · *Producción* (órdenes,
+lotes y calidad, listas de materiales y rutas) · *Auditoría*. Cada módulo se despliega con un clic (o Enter)
+y se abre uno a la vez; el que contiene la pantalla actual se abre solo. Cerrado, muestra la suma de sus
+avisos (stock crítico, compras por recibir, cotizaciones pendientes…). Si un rol ve una sola pantalla de un
+módulo, aparece como enlace directo. Las entradas de Compras y Producción llevan a su pestaña
+(`/app/compras?tab=reabastecimiento`, `/app/produccion?tab=lotes`…). Con *« Contraer menú* queda una barra de
+íconos que se despliega al pasar el mouse; la preferencia se guarda en el navegador.
+
+**Celular y tableta (n.° 56).** Hasta 880 px el menú es un panel deslizable (☰) con fondo oscuro: se cierra
+con ×, Esc, tocando el fondo o al elegir una pantalla, y mientras está abierto la página no se desplaza ni
+recibe el foco. Los filtros se acomodan de dos en dos, las tarjetas de indicadores pasan a una columna y los
+gráficos se desplazan de lado. Ninguna pantalla interna se desborda a 390 px ni a 768 px, y las tablas más
+anchas que su espacio (laptop, panel lateral abierto) se desplazan de lado en vez de recortar columnas.
+
+**Inventario sin entradas ni salidas manuales (n.° 57).** Las entradas llegan al recibir compras y las
+salidas con ventas y producción, cada una con su documento en *Movimientos*. Inventario conserva
+*Trasladar* y *Ajuste*: el ajuste fija lo contado en una ubicación con un motivo (conteo físico, merma o
+daño, uso interno, donación o muestra, corrección u otro) que queda en el movimiento y en la auditoría. La
+ficha del producto ofrece *Ajustar* y las acciones rápidas ya no incluyen *Registrar entrada*. La API sigue
+aceptando `ENTRY`/`EXIT` (la usa `npm run seed:real`).
+
+**Pipeline con arrastrar y soltar (n.° 58).** En *Cotizaciones → Pipeline* las tarjetas se arrastran entre
+columnas con las reglas del servidor: Borrador → Pendiente (enviar), Pendiente → Aprobada, Aprobada o
+Pendiente → Convertida (abre la venta; si estaba pendiente se aprueba y se convierte en un paso) y Pendiente o
+Aprobada → Rechazada (pide el motivo). Al arrastrar, las columnas válidas se marcan en verde con lo que
+pasará al soltar; soltar en una no permitida explica por qué y Esc cancela. Con mouse se arrastra la tarjeta;
+en celular, desde la manija ⠿ (el tablero se desplaza solo cerca de los bordes). Los botones de cada tarjeta
+siguen funcionando igual.
+
+## Contacto por motivo, garantías en OPI, catálogo web, íconos y modo oscuro (mejoras 59-63)
+
+Hay dos migraciones nuevas (`20261106000000_consultas_por_tipo` y `20261106010000_garantias`). Desde
+`backend`, con `start:dev` detenido:
+
+```powershell
+npx prisma migrate deploy
+npx prisma generate
+npm run start:dev
+```
+
+**Contacto por motivo (n.° 59).** El formulario de Contacto pide el motivo: precios o cotización, servicio
+técnico o garantía, mi cuenta, reclamo o sugerencia, u otra consulta (`web_inquiries.type`: `QUOTE`,
+`SERVICE`, `ACCOUNT`, `COMPLAINT`, `OTHER`). Solo un pedido de precios se convierte en cotización: el servidor
+responde 409 a los demás y el personal puede corregir el motivo mientras la solicitud está abierta
+(`PATCH /inquiries/:id/type`, `inquiries:write`). Con la sesión del portal iniciada el mensaje se envía con
+`POST /portal/contact` y queda enlazado a la cuenta; el cliente cambia su correo de acceso en *Mi perfil*
+(`PATCH /portal/me/email`, pide la contraseña actual).
+
+**Órdenes de servicio con garantía (n.° 60).** Cada producto puede registrar su garantía en días
+(`products.warranty_days`, en la ficha y en el catálogo público). Una OPI *en garantía* no se cobra: la cubre
+un producto que el cliente compró con garantía vigente (venta + producto) o la garantía del trabajo de un
+servicio anterior, y termina en *Completada* sin factura. Al completar una orden se fija la garantía del
+trabajo (90 días por omisión; 0 = sin garantía). Una solicitud de servicio técnico o un reclamo se atiende
+con *Crear orden de servicio*: la solicitud queda *Cerrada* y enlazada (SOL › OPI) y el cliente ve la orden
+en *Mis solicitudes*. La lista de OPI tiene tarjetas de resumen que filtran (en curso, sin técnico, en
+garantía, por facturar) y cada orden abre su detalle en el panel lateral (`/app/ordenes?servicio=<id>`).
+
+| Método | Ruta | Permiso |
+|---|---|---|
+| GET | `/service-orders/warranty-options?customerId=` (compras y servicios con garantía del cliente) | `service-orders:write` |
+| POST | `/service-orders` con `underWarranty` + `warrantySaleId`/`warrantyProductId` o `warrantyOrderId`, e `inquiryId` | `service-orders:write` |
+| POST | `/service-orders/:id/complete` con `warrantyDays` (0-365) | `service-orders:write` |
+| GET | `/service-orders?warranty=true` | `service-orders:read` |
+
+**Catálogo web interno (n.° 61).** Aplica la misma regla del sitio público (activo, con precio y con su
+categoría y marca activas) y marca cada producto como *Publicado* o *No publicado* con el motivo, además de lo
+que le falta a su ficha (foto, descripción). Tarjetas de resumen, filtros, vista en tarjetas o en lista y
+paginación; desde cada producto se abre su ficha, su página pública, se fija el precio o se completa la ficha.
+
+**Íconos del menú (n.° 62).** Íconos de línea (Lucide, licencia ISC) en `components/common/Icon.tsx`, sin
+dependencia nueva: carrito para Compras, recibo para Ventas y facturación, llave para las OPI…
+
+**Modo oscuro (n.° 63).** Selector claro / oscuro / como el sistema en la barra superior, en el sitio
+público y en el login. La preferencia se guarda en el navegador (`siven.tema`) y `index.html` la aplica antes
+de pintar. Los colores de las hojas de estilo son tokens (`--card`, `--line`, `--amber-tint`, `--green-ink`…):
+el modo oscuro solo redefine sus valores en `:root[data-theme="dark"]`. Al imprimir se usan los colores claros.
+
+## Documentación: manual de usuario (mejora 64)
+
+Opción **Documentación** del menú (`/app/documentacion`), visible para todos los roles. No necesita migración
+ni cambios en el backend. Es el manual de usuario completo, en lenguaje sencillo y con capturas del sistema:
+25 capítulos agrupados como el menú (primeros pasos, cada módulo interno, sitio web, portal de clientes,
+preguntas frecuentes y glosario). Tiene índice, búsqueda sin tildes en todo el manual, "En este capítulo",
+anterior / siguiente, imágenes que se amplían con un clic y descarga en PDF del capítulo o del manual
+completo (con portada y contenido), generada en el navegador con `pdfmake` (se carga solo al descargar). Los capítulos de
+módulos que el rol no abre se marcan con un candado, pero se pueden leer. El botón **?** de la barra superior
+abre el capítulo de la pantalla en que se está, y la dirección lleva el capítulo y la sección
+(`/app/documentacion?cap=ordenes#facturar-la-orden`), así que se puede compartir.
+
+Para corregir o ampliar el manual no hay que tocar código:
+
+- Cada capítulo es un archivo Markdown en `frontend/src/features/docs/manual/` (`NN-id.md`; el número da el
+  orden). La cabecera lleva `id` (el del módulo, para que funcione el botón de ayuda), `titulo`, `grupo`,
+  `modulo` (para saber qué roles lo usan; vacío si no es un módulo) y `resumen`.
+- Las imágenes van en `frontend/public/manual/` (WebP) y se citan como `![pie de imagen](/manual/nombre.webp)`
+  en una línea propia. `frontend/src/features/docs/imagenes.ts` guarda su tamaño para que la página no salte
+  mientras cargan; una imagen nueva que no esté ahí se muestra igual.
+- Se admite: `##` y `###`, párrafos, listas (`-` y `1.`, con viñetas sangradas debajo de un paso), tablas,
+  `---`, **negrita**, *cursiva*, `código`, teclas `[[Ctrl + K]]`, íconos del menú `:ic-wallet:`, avisos
+  `> **Nota:**`, `> **Importante:**` y `> **Consejo:**`, y enlaces a otro capítulo o sección
+  (`[texto](?cap=pagos#registrar-un-pago)`).
+
+## Despliegue en SmarterASP.NET (un solo sitio)
+
+En producción la API de NestJS sirve también el frontend: si existe la carpeta `public` (o `FRONTEND_DIR`)
+con el `index.html` compilado, la API la publica y devuelve `index.html` en las rutas de React Router. Así
+todo queda en un mismo dominio (sin CORS ni proxy) y el WebSocket usa el mismo sitio. En desarrollo no hay
+carpeta `public` y todo sigue igual (Vite en 5173). La API confía en el proxy local (`trust proxy`) para
+registrar la IP real del cliente detrás de IIS.
+
+1. **Base de datos.** Con la base PostgreSQL de SmarterASP creada, desde `backend` en su PC (con
+   `DATABASE_URL` apuntando a esa base) revise que tenga todas las migraciones:
+   `npx prisma migrate status` y, si faltan, `npx prisma migrate deploy`. Si la base está vacía, después
+   `npx prisma db seed`.
+2. **Claves.** Copie `deploy/web.config.ejemplo` como `deploy/web.config` y cambie los valores `CAMBIAR`
+   (conexión, `JWT_SECRET` nuevo, correo). `deploy/web.config` no se sube a GitHub (.gitignore).
+3. **Paquete.** Desde la raíz, en PowerShell: `powershell -ExecutionPolicy Bypass -File deploy\preparar-despliegue.ps1`.
+   Compila frontend y backend y deja `deploy\salida` y `deploy\siven-sitio.zip` (dist, public, uploads,
+   logs, web.config y node_modules de producción).
+4. **Subir.** En el panel, *Archivos* (o FTP): suba `siven-sitio.zip` a la carpeta del sitio, descomprímalo
+   ahí y dé permiso de **escritura** a `uploads` y `logs`. Encienda el sitio.
+5. **Probar.** Abra la dirección del sitio. Si sale un error 502/500, revise `logs\node*.log`.
+
+El servidor necesita Node 22 o superior (`processPath` en `web.config`); si tiene uno más viejo, suba Node
+portátil para Windows dentro del sitio y ponga la ruta completa a `node.exe`.
 
 ## Inventario (Fase 9)
 

@@ -12,8 +12,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, api, errorMessage, getAll, request, setAuthToken, setUnauthorizedHandler } from '../services/api/client';
 import {
-  DEFAULT_CONFIG, INQUIRY_TO_API, METHOD_TO_API, MOVEMENT_TO_API, PURCHASE_STATUS, mapAuditoria, mapCatalogo, mapCliente, mapCompra,
-  mapConsulta, mapCotizacion, mapConfig, mapCxc, mapDashboard, mapFichaProducto, mapMovimiento, mapOrden, mapPago, mapProducto, mapProveedor,
+  DEFAULT_CONFIG, INQUIRY_TO_API, INQUIRY_TYPE_TO_API, METHOD_TO_API, PURCHASE_STATUS, mapAuditoria, mapCatalogo, mapCliente, mapCompra,
+  mapConsulta, mapCotizacion, mapConfig, mapCxc, mapDashboard, mapFichaProducto, mapMovimiento, mapOpcionesGarantia, mapOrden, mapPago, mapProducto, mapProveedor,
   mapResumenCompras, mapResumenReposicion, mapSugerencia, mapTecnico, mapVenta, type ApiPurchaseStatus,
 } from '../services/api/mappers';
 import * as authService from '../services/auth/authService';
@@ -358,31 +358,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         run(async () => {
           const body = {
             sku: d.sku, barcode: d.codigoBarras.trim() || null, name: d.nombre, description: d.descripcion || undefined, imageUrl: d.imagen.trim() || null, unit: d.unidad,
-            categoryId: d.categoriaId, brandId: d.marcaId, minStock: d.stockMin, maxStock: d.stockMax,
+            categoryId: d.categoriaId, brandId: d.marcaId, minStock: d.stockMin, maxStock: d.stockMax, warrantyDays: d.garantiaDias,
           };
           if (id) {
             await api.patch(`/products/${id}`, body);
             // El precio tiene su propia sección (permiso prices:write) y queda en el historial.
             if (d.precio !== undefined) await api.patch(`/products/${id}/price`, { salePrice: d.precio, ...(d.motivoPrecio ? { reason: d.motivoPrecio } : {}) });
-          } else {
-            await api.post('/products', { ...body, ...(d.precio !== undefined && { salePrice: d.precio }) });
+            return id;
           }
+          const creado = await api.post<{ id: string }>('/products', { ...body, ...(d.precio !== undefined && { salePrice: d.precio }) });
+          return creado.id;
         }, ['productos', 'catalogos', 'dashboard', 'auditoria']),
+
+      // Foto del producto (mejora n.° 4): sube una nueva (ya reducida en el navegador) o la quita.
+      fotoProducto: (id, foto) =>
+        run(async () => {
+          if (!foto) {
+            await api.del(`/products/${id}/image`);
+            return;
+          }
+          const form = new FormData();
+          form.append('file', foto, foto instanceof File ? foto.name : 'foto');
+          await api.post(`/products/${id}/image`, form);
+        }, ['productos', 'auditoria']),
 
       cambiarEstadoProducto: (id, activo) =>
         run(() => api.patch(`/products/${id}/status`, { isActive: activo }).then(() => undefined), ['productos', 'dashboard', 'auditoria']),
 
-      registrarMovimiento: (d) =>
+      registrarAjuste: (d) =>
         run(async () => {
-          const body: Record<string, unknown> = { productId: d.prodId, type: MOVEMENT_TO_API[d.tipo], locationId: d.ubicacionId };
-          if (d.tipo === 'Ajuste') body.newStock = d.nuevoStock;
-          else body.quantity = d.cantidad;
-          if (d.tipo === 'Entrada') {
-            body.unitCost = d.costo;
-            if (d.proveedorId) body.supplierId = d.proveedorId;
-          }
+          const body: Record<string, unknown> = { productId: d.prodId, type: 'ADJUSTMENT', locationId: d.ubicacionId, newStock: d.nuevoStock, note: d.nota.trim() };
           if (d.ref.trim()) body.reference = d.ref.trim();
-          if (d.nota.trim()) body.note = d.nota.trim();
           const m = await api.post<Json>('/inventory/movements', body);
           return { sku: String(m?.product?.sku ?? ''), stock: Number(m?.product?.stock ?? m?.movement?.stockAfter ?? 0) };
         }, ['productos', 'movimientos', 'dashboard', 'auditoria']),
@@ -474,21 +480,54 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ['pagos', 'cxc', 'ventas', 'clientes', 'dashboard', 'auditoria'],
         ),
 
-      crearOrden: (cliId, desc, tecnicoId) =>
+      crearOrden: (d) =>
         run(async () => {
-          const o = await api.post<Json>('/service-orders', { customerId: cliId, description: desc, ...(tecnicoId ? { technicianId: tecnicoId } : {}) });
-          return String(o.code);
-        }, ['ordenes', 'dashboard', 'auditoria']),
+          const g = d.garantia;
+          const o = await api.post<Json>('/service-orders', {
+            customerId: d.cliId,
+            description: d.desc,
+            ...(d.tecnicoId ? { technicianId: d.tecnicoId } : {}),
+            ...(d.notas?.trim() ? { notes: d.notas.trim() } : {}),
+            ...(g ? { underWarranty: true, ...('ordenId' in g ? { warrantyOrderId: g.ordenId } : { warrantySaleId: g.ventaId, warrantyProductId: g.productoId }) } : {}),
+            ...(d.solicitudId ? { inquiryId: d.solicitudId } : {}),
+          });
+          return { id: String(o.id), codigo: String(o.code) };
+        }, ['ordenes', 'consultas', 'dashboard', 'auditoria']),
+
+      obtenerOrden: async (id) => {
+        try {
+          return ok(mapOrden(await api.get<Json>(`/service-orders/${id}`)));
+        } catch (e) {
+          return fail(errorMessage(e));
+        }
+      },
+
+      opcionesGarantia: async (cliId) => {
+        try {
+          return ok(mapOpcionesGarantia(await api.get<Json>(`/service-orders/warranty-options?customerId=${encodeURIComponent(cliId)}`)));
+        } catch (e) {
+          return fail(errorMessage(e));
+        }
+      },
 
       asignarOrden: (id, tecnicoId) => run(() => api.post(`/service-orders/${id}/assign`, { technicianId: tecnicoId }).then(() => undefined), ['ordenes', 'dashboard', 'auditoria']),
       iniciarOrden: (id) => run(() => api.post(`/service-orders/${id}/start`).then(() => undefined), ['ordenes', 'dashboard', 'auditoria']),
-      completarOrden: (id, resumen) =>
-        run(() => api.post(`/service-orders/${id}/complete`, resumen.trim() ? { summary: resumen.trim() } : {}).then(() => undefined), ['ordenes', 'dashboard', 'auditoria']),
+      completarOrden: (id, resumen, diasGarantia) =>
+        run(
+          () =>
+            api
+              .post(`/service-orders/${id}/complete`, { ...(resumen.trim() ? { summary: resumen.trim() } : {}), ...(diasGarantia !== undefined ? { warrantyDays: diasGarantia } : {}) })
+              .then(() => undefined),
+          ['ordenes', 'dashboard', 'auditoria'],
+        ),
       facturarOrden: (id, ventaId) => run(() => api.post(`/service-orders/${id}/invoice`, { saleId: ventaId }).then(() => undefined), ['ordenes', 'dashboard', 'auditoria']),
       cancelarOrden: (id, motivo) => run(() => api.post(`/service-orders/${id}/cancel`, { reason: motivo }).then(() => undefined), ['ordenes', 'dashboard', 'auditoria']),
 
       cambiarEstadoConsulta: (id, estado) =>
         run(() => api.patch(`/inquiries/${id}/status`, { status: INQUIRY_TO_API[estado] }).then(() => undefined), ['consultas', 'dashboard', 'auditoria']),
+
+      cambiarTipoConsulta: (id, tipo) =>
+        run(() => api.patch(`/inquiries/${id}/type`, { type: INQUIRY_TYPE_TO_API[tipo] }).then(() => undefined), ['consultas', 'auditoria']),
 
       obtenerConsulta: async (id) => {
         try {

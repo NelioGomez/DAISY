@@ -9,14 +9,16 @@ import type {
   FichaProducto,
   Database,
   EstadoConsulta,
+  TipoConsulta,
   MetodoPago,
   Moneda,
+  OpcionesGarantia,
+  OrdenServicio,
   PrecioHistorial,
   ResumenReposicion,
   Result,
   SessionUser,
   SugerenciaReposicion,
-  TipoMovimiento,
   Venta,
 } from '../types';
 import type { Unidad } from '../utils/units';
@@ -40,6 +42,20 @@ export interface ProductoInput {
   stockMin: number;
   /** Tope de reposición; null = sin definir. */
   stockMax: number | null;
+  /** Garantía en días desde la venta; null = sin garantía. */
+  garantiaDias: number | null;
+}
+
+/** Nueva orden de servicio (mejora n.° 60: puede estar en garantía o venir de una solicitud web). */
+export interface OrdenInput {
+  cliId: string;
+  desc: string;
+  tecnicoId: string | null;
+  /** Qué cubre la garantía: un producto comprado (venta + producto) o un servicio anterior. */
+  garantia?: { ventaId: string; productoId: string } | { ordenId: string } | null;
+  /** Solicitud de servicio técnico o reclamo que se atiende con la orden (queda Cerrada). */
+  solicitudId?: string | null;
+  notas?: string;
 }
 
 export interface CompraLineaInput {
@@ -74,19 +90,15 @@ export interface ProveedorInput extends ClienteInput {
   pais: string;
 }
 
-export interface MovimientoInput {
-  tipo: TipoMovimiento;
+/** Ajuste de inventario por conteo (las entradas y salidas llegan por compras, ventas y producción). */
+export interface AjusteInput {
   prodId: string;
-  /** Entrada y salida. */
-  cantidad?: number;
-  /** Solo entrada: costo unitario de compra. */
-  costo?: number;
-  /** Solo ajuste: existencia contada. */
-  nuevoStock?: number;
-  proveedorId?: string;
-  /** Dónde ocurre (1 = bodega, 2 = sucursal). En un ajuste, lo contado es de esa ubicación. */
+  /** Existencia contada en la ubicación. */
+  nuevoStock: number;
+  /** Dónde se contó (1 = bodega, 2 = sucursal). */
   ubicacionId: number;
   ref: string;
+  /** Motivo (el servidor exige al menos 5 caracteres). */
   nota: string;
 }
 
@@ -106,9 +118,12 @@ export type RefreshKey =
 export interface DataActions {
   /** El servidor ya audita cada operación; se conserva por compatibilidad. */
   registrarAuditoria(modulo: string, detalle: string): void;
-  guardarProducto(id: string | null, data: ProductoInput): Promise<Result>;
+  /** Devuelve el id del producto (el nuevo, si se creó). */
+  guardarProducto(id: string | null, data: ProductoInput): Promise<Result<string>>;
+  /** Sube la foto del producto o la quita (null). */
+  fotoProducto(id: string, foto: Blob | null): Promise<Result>;
   cambiarEstadoProducto(id: string, activo: boolean): Promise<Result>;
-  registrarMovimiento(data: MovimientoInput): Promise<Result<{ sku: string; stock: number }>>;
+  registrarAjuste(data: AjusteInput): Promise<Result<{ sku: string; stock: number }>>;
   /** Devuelve el id del cliente (nuevo o editado). */
   guardarCliente(id: string | null, data: ClienteInput): Promise<Result<string>>;
   guardarProveedor(id: string | null, data: ProveedorInput): Promise<Result>;
@@ -123,14 +138,20 @@ export interface DataActions {
   historialPrecios(productoId: string): Promise<Result<PrecioHistorial[]>>;
   anularVenta(id: string, motivo: string): Promise<Result>;
   registrarPago(ventaId: string, monto: number, metodo: 'Contado' | 'Transferencia', referencia: string): Promise<Result>;
-  crearOrden(cliId: string, desc: string, tecnicoId: string | null): Promise<Result<string>>;
+  crearOrden(data: OrdenInput): Promise<Result<{ id: string; codigo: string }>>;
+  obtenerOrden(id: string): Promise<Result<OrdenServicio>>;
+  /** Compras con garantía y servicios con garantía de trabajo del cliente. */
+  opcionesGarantia(cliId: string): Promise<Result<OpcionesGarantia>>;
   asignarOrden(id: string, tecnicoId: string): Promise<Result>;
   iniciarOrden(id: string): Promise<Result>;
-  completarOrden(id: string, resumen: string): Promise<Result>;
+  /** diasGarantia: garantía del trabajo (por omisión 90 días; 0 = sin garantía). */
+  completarOrden(id: string, resumen: string, diasGarantia?: number): Promise<Result>;
   facturarOrden(id: string, ventaId: string): Promise<Result>;
   cancelarOrden(id: string, motivo: string): Promise<Result>;
   /** Devuelve el código de la solicitud (SOL-000001). */
   cambiarEstadoConsulta(id: string, estado: EstadoConsulta): Promise<Result>;
+  /** Corrige el motivo de una solicitud (mejora n.° 59). */
+  cambiarTipoConsulta(id: string, tipo: TipoConsulta): Promise<Result>;
   obtenerConsulta(id: string): Promise<Result<ConsultaWeb>>;
   /** Solicitud web → cotización precargada (la solicitud pasa a Cotizada y se conserva). */
   cotizarConsulta(id: string, data: { cliId?: string; lineas?: CartLine[]; notas?: string; borrador?: boolean }): Promise<Result<{ id: string; codigo: string }>>;

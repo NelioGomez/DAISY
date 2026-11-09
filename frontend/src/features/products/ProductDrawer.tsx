@@ -5,6 +5,8 @@
 import { ErrorState } from '../../components/feedback/ErrorState';
 import { useEffect, useState } from 'react';
 import { DocChip } from '../../components/common/DocChain';
+import { Icon } from '../../components/common/Icon';
+import { ProductImage } from '../../components/common/ProductImage';
 import { Tabs, type TabItem } from '../../components/common/Tabs';
 import { EmptyState } from '../../components/feedback/Empty';
 import { ViewLoader } from '../../components/feedback/FullScreenLoader';
@@ -15,8 +17,9 @@ import { subscribeRealtime } from '../../services/realtime/realtime';
 import { useAuth, useData } from '../../store/hooks';
 import type { FichaProducto } from '../../types';
 import { ago, fmtDate, fmtDateTime, money } from '../../utils/format';
+import { plazoGarantia } from '../../utils/warranty';
 import { useOpenDocument } from '../documents/useOpenDocument';
-import { MovementFormModal } from '../inventory/MovementFormModal';
+import { AdjustmentFormModal } from '../inventory/AdjustmentFormModal';
 import { costIn } from '../purchases/purchaseFormat';
 import { ROTACION } from '../inventory/rotation';
 import { PriceModal } from './PriceModal';
@@ -103,8 +106,8 @@ export function ProductDrawer({ productoId }: { productoId: string }) {
       footer={
         <>
           {can('inventory:write') && (
-            <button className="b b-out b-sm" onClick={() => modal.open(<MovementFormModal tipo="Entrada" productoId={p.id} />)}>
-              ↧ Entrada
+            <button className="b b-out b-sm" onClick={() => modal.open(<AdjustmentFormModal productoId={p.id} />)}>
+              ⚖ Ajustar
             </button>
           )}
           {can('prices:write') && (
@@ -120,16 +123,29 @@ export function ProductDrawer({ productoId }: { productoId: string }) {
         </>
       }
     >
-      <div className="tag-row">
-        <Tag tone={st.tone}>
-          <span aria-hidden="true">{st.ic}</span> {f.estadoStock}
-        </Tag>
-        {f.stats && (
-          <Tag tone={ROTACION[f.stats.rotacion].tone}>
-            <span aria-hidden="true">{ROTACION[f.stats.rotacion].ic}</span> {ROTACION[f.stats.rotacion].txt}
-          </Tag>
-        )}
-        {!p.activo && <Tag tone="t-gray">Inactivo</Tag>}
+      <div className="drawer-photo">
+        <ProductImage src={p.imagen} size={88} fallback={p.ic} alt={p.imagen ? `Foto de ${p.nombre}` : ''} />
+        <div>
+          <div className="tag-row">
+            <Tag tone={st.tone}>
+              <span aria-hidden="true">{st.ic}</span> {f.estadoStock}
+            </Tag>
+            {f.stats && (
+              <Tag tone={ROTACION[f.stats.rotacion].tone}>
+                <span aria-hidden="true">{ROTACION[f.stats.rotacion].ic}</span> {ROTACION[f.stats.rotacion].txt}
+              </Tag>
+            )}
+            {p.garantiaDias ? (
+              <Tag tone="t-blue">
+                <Icon name="shield-check" size={12} strokeWidth={2.4} /> Garantía {plazoGarantia(p.garantiaDias)}
+              </Tag>
+            ) : (
+              <Tag tone="t-gray">Sin garantía</Tag>
+            )}
+            {!p.activo && <Tag tone="t-gray">Inactivo</Tag>}
+          </div>
+          {p.descripcion && p.descripcion !== p.nombre && <p className="doc-meta">{p.descripcion}</p>}
+        </div>
       </div>
 
       <div className="mini-kpis">

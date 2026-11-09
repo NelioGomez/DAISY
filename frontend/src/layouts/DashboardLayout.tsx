@@ -1,25 +1,44 @@
-/* Layout del panel interno: sidebar por rol + topbar + área de vista. */
-import { Suspense, useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom';
-import { Logo } from '../components/common/Logo';
-import { MENU, MODULE_DATA, TITLES, isModuleId, visibleModules } from '../config/navigation';
+/* Layout del panel interno: menú por módulos según el rol + topbar + área de vista.
+   En celular el menú es un panel deslizable (mejora n.° 56); en escritorio se puede contraer. */
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Link, Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom';
+import { MODULE_DATA, TITLES, isModuleId, visibleModules, type MenuBadge } from '../config/navigation';
+import { Icon } from '../components/common/Icon';
+import { ThemeToggle } from '../components/common/ThemeToggle';
 import { LoadErrors } from '../components/feedback/LoadErrors';
 import { SkeletonPage } from '../components/feedback/Skeleton';
 import { RealtimeIndicator } from '../components/feedback/RealtimeIndicator';
 import { SESSION_IDLE_MINUTES } from '../config/security';
 import { readNoticesEnabled, storeNoticesEnabled, useRealtimeNotices } from '../features/realtime/useRealtimeNotices';
 import { useIdleTimeout } from '../hooks/useIdleTimeout';
+import { MOBILE_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { useWideTables } from '../hooks/useWideTables';
+import { recordStore } from '../components/modals/recordStore';
 import { useModal } from '../components/modals/useModal';
 import { NotificationBell } from '../features/dashboard/NotificationBell';
 import { GlobalSearch } from '../features/search/GlobalSearch';
 import { QuotationFormModal } from '../features/quotations/QuotationFormModal';
+import { withRecordParam } from '../features/records/records';
+import { useRecordUrlSync } from '../features/records/useRecordUrlSync';
 import { useAuth, useData } from '../store/hooks';
 import type { ModuleId } from '../types';
+import { Sidebar, type BadgeInfo } from './Sidebar';
 
 /** Pantallas dentro de un módulo (título propio y breadcrumb). */
 const SUBPAGES: Record<string, string> = {
   '/app/ventas/nueva': 'Punto de venta',
 };
+
+/** Preferencia del menú contraído a íconos (escritorio). */
+const RAIL_KEY = 'siven.menu.compacto';
+
+function readRail(): boolean {
+  try {
+    return localStorage.getItem(RAIL_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 function useClock(): string {
   const fmt = () => new Date().toLocaleString('es-NI', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -39,9 +58,44 @@ export function DashboardLayout() {
   const location = useLocation();
   const match = useMatch('/app/:module/*');
   const clock = useClock();
-  const [menuOpen, setMenuOpen] = useState(false);
+  // Panel del menú en celular: se cierra solo al cambiar de pantalla.
+  const mobile = useMediaQuery(MOBILE_QUERY);
+  const [menu, setMenu] = useState({ open: false, at: '' });
+  const urlActual = location.pathname + location.search;
+  const menuOpen = mobile && menu.open && menu.at === urlActual;
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    setMenu({ open: false, at: '' });
+    // Después de que la página deja de estar inactiva (inert) el foco vuelve al botón ☰.
+    if (restoreFocus) setTimeout(() => toggleRef.current?.focus(), 0);
+  }, []);
+  const [rail, setRail] = useState(readRail);
+  const toggleRail = () =>
+    setRail((r) => {
+      try {
+        localStorage.setItem(RAIL_KEY, r ? '0' : '1');
+      } catch {
+        /* sin almacenamiento: solo dura esta visita */
+      }
+      return !r;
+    });
   const [notices, setNotices] = useState(readNoticesEnabled);
   useRealtimeNotices(notices);
+  // Tablas anchas: desplazamiento horizontal en vez de columnas recortadas.
+  useWideTables();
+  // Registro abierto en el panel lateral: dirección propia y último tramo de la ruta (n.° 32 y 33).
+  useRecordUrlSync();
+  const record = useSyncExternalStore(recordStore.subscribe, recordStore.get);
+  // Título de la pestaña: el registro abierto o la pantalla (sirve también en el historial).
+  const modParam = match?.params.module;
+  const tabTitle = record.label ?? SUBPAGES[location.pathname] ?? TITLES[isModuleId(modParam) ? modParam : 'dashboard'][0];
+  useEffect(() => {
+    const prev = document.title;
+    document.title = `${tabTitle} · SIVEN NORCOR`;
+    return () => {
+      document.title = prev;
+    };
+  }, [tabTitle]);
 
   // Igual que go() del prototipo: al cambiar de vista se sube al inicio de la página.
   useEffect(() => {
@@ -81,17 +135,24 @@ export function DashboardLayout() {
   const allowed = visibleModules(user);
   const param = match?.params.module;
   const moduleId: ModuleId = isModuleId(param) ? param : 'dashboard';
-  const [title, crumb] = TITLES[moduleId];
-  // Ruta de navegación (breadcrumb) para pantallas dentro de un módulo, p. ej. Ventas › Nueva venta.
+  const [title, desc] = TITLES[moduleId];
+  // Ruta de navegación (mejora n.° 32): Inicio › Módulo › Subpantalla › Registro abierto,
+  // p. ej. Inicio › Ventas y Facturación › Factura FAC-000125. Cada tramo anterior es un enlace.
   const sub = SUBPAGES[location.pathname];
+  const home = allowed.includes('dashboard') ? '/app/dashboard' : `/app/${allowed[0] ?? 'dashboard'}`;
+  const here = location.pathname + withRecordParam(location.search, null);
+  const crumbs: Array<{ label: string; to: string }> = [{ label: 'Inicio', to: home }];
+  if (moduleId !== 'dashboard') crumbs.push({ label: title, to: `/app/${moduleId}` });
+  if (sub) crumbs.push({ label: sub, to: here });
+  if (record.key) crumbs.push({ label: record.label ?? 'Detalle', to: '' });
 
-  const badges: Partial<Record<ModuleId, number>> = {
-    inventario: db.productos.filter((p) => p.stock <= p.stockMin).length,
-    productos: db.productos.filter((p) => p.stock <= p.stockMin).length,
-    consultas: db.consultas.filter((c) => c.estado === 'Nueva').length,
-    compras: db.comprasResumen?.pendientes ?? 0,
-    pagos: db.cxc.length,
-    cotizaciones: db.cotizaciones.filter((c) => c.estado === 'Pendiente').length,
+  const aviso = (n: number, uno: string, varios: string): BadgeInfo => ({ n, label: n === 1 ? uno : varios });
+  const badges: Record<MenuBadge, BadgeInfo> = {
+    criticos: aviso(db.productos.filter((p) => p.stock <= p.stockMin).length, 'producto en o bajo el mínimo', 'productos en o bajo el mínimo'),
+    comprasPorRecibir: aviso(db.comprasResumen?.pendientes ?? 0, 'compra por recibir', 'compras por recibir'),
+    cotizacionesPendientes: aviso(db.cotizaciones.filter((c) => c.estado === 'Pendiente').length, 'cotización pendiente', 'cotizaciones pendientes'),
+    cxc: aviso(db.cxc.length, 'cuenta por cobrar', 'cuentas por cobrar'),
+    consultasNuevas: aviso(db.consultas.filter((c) => c.estado === 'Nueva').length, 'consulta web nueva', 'consultas web nuevas'),
   };
 
   const handleLogout = () => {
@@ -100,55 +161,49 @@ export function DashboardLayout() {
   };
 
   return (
-    <section id="app">
-      <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
-        <div className="brand">
-          <Logo variant="sidebar" />
-        </div>
-        <nav className="nav">
-          {MENU.map((group) => {
-            const items = group.items.filter((it) => allowed.includes(it.id) && (!it.perm || can(it.perm)));
-            if (!items.length) return null;
-            return (
-              <div key={group.grp}>
-                <div className="nav-group">{group.grp}</div>
-                {items.map((it) => (
-                  <NavLink
-                    key={it.to ?? it.id}
-                    to={it.to ?? `/app/${it.id}`}
-                    end={it.end}
-                    onClick={() => setMenuOpen(false)}
-                    className={({ isActive }) => (isActive ? 'active' : '')}
-                  >
-                    <span className="ic">{it.ic}</span>
-                    {it.t}
-                    {!it.to && !!badges[it.id] && <span className="badge">{badges[it.id]}</span>}
-                  </NavLink>
-                ))}
-              </div>
-            );
-          })}
-        </nav>
-        <div className="foot">
-          @{user.user} · {user.name}
-        </div>
-      </aside>
+    <section id="app" className={rail ? 'is-rail' : undefined}>
+      <Sidebar
+        id="app-sidebar"
+        allowed={allowed}
+        can={can}
+        badges={badges}
+        home={home}
+        footer={`@${user.user} · ${user.name}`}
+        mobile={mobile}
+        open={menuOpen}
+        onClose={closeMenu}
+        rail={rail}
+        onToggleRail={toggleRail}
+      />
 
-      <div className="main">
+      <div className="main" inert={menuOpen}>
         <header className="topbar">
-          <button className="icon-btn menu-toggle" onClick={() => setMenuOpen((o) => !o)} aria-label="Abrir menú">
-            ☰
+          <button
+            ref={toggleRef}
+            className="icon-btn menu-toggle"
+            onClick={() => setMenu({ open: true, at: urlActual })}
+            aria-label="Abrir menú"
+            aria-expanded={menuOpen}
+            aria-controls="app-sidebar"
+          >
+            <Icon name="menu" size={20} />
           </button>
           <div className="tb-title">
-            <h1>{sub ?? title}</h1>
-            <nav className="crumb" aria-label="Ruta">
-              {sub ? (
-                <>
-                  NORCOR › <Link to={`/app/${moduleId}`}>{title}</Link> › {sub}
-                </>
-              ) : (
-                <>NORCOR · {crumb}</>
-              )}
+            <h1 title={desc}>{sub ?? title}</h1>
+            <nav className="crumb" aria-label="Ruta de navegación">
+              <ol>
+                {crumbs.map((c, i) =>
+                  i === crumbs.length - 1 ? (
+                    <li key={c.label + i} aria-current="page" title={c.label}>
+                      {c.label}
+                    </li>
+                  ) : (
+                    <li key={c.label + i}>
+                      <Link to={c.to}>{c.label}</Link>
+                    </li>
+                  ),
+                )}
+              </ol>
             </nav>
           </div>
           <div className="spacer" />
@@ -163,18 +218,26 @@ export function DashboardLayout() {
             }
           />
           <button className="search-chip" onClick={() => modal.open(<GlobalSearch />)} aria-label="Buscar en todo el sistema (Ctrl + K)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" />
-              <path d="m20 20-3.5-3.5" />
-            </svg>
+            <Icon name="search" size={15} />
             <span>Buscar…</span>
             <kbd>Ctrl K</kbd>
           </button>
           <NotificationBell />
           <div className="clock">{clock}</div>
-          <button className="icon-btn tb-site" title="Catálogo público" aria-label="Catálogo público" onClick={() => navigate('/catalogo')}>
-            🌐
-          </button>
+          <ThemeToggle />
+          {moduleId !== 'documentacion' && (
+            <Link
+              className="icon-btn tb-help"
+              to={`/app/documentacion?cap=${location.pathname.startsWith('/app/ventas/nueva') ? 'pos' : moduleId}`}
+              title="Manual de esta pantalla"
+              aria-label="Manual de usuario de esta pantalla"
+            >
+              <Icon name="circle-help" />
+            </Link>
+          )}
+          <a className="icon-btn tb-site" href="/catalogo" target="_blank" rel="noreferrer" title="Sitio público (se abre en otra pestaña)" aria-label="Sitio público, se abre en otra pestaña">
+            <Icon name="globe" />
+          </a>
           <div className="userchip">
             <div className="av" style={{ background: `linear-gradient(160deg,${user.color},#1a2c3d)` }}>
               {user.name[0]}
@@ -185,7 +248,7 @@ export function DashboardLayout() {
             </div>
           </div>
           <button className="icon-btn" title="Cerrar sesión" aria-label="Cerrar sesión" onClick={handleLogout}>
-            ⎋
+            <Icon name="log-out" />
           </button>
         </header>
         <main className="view">

@@ -52,10 +52,6 @@ export function setAuthToken(token: string | null): void {
   authToken = token;
 }
 
-export function getAuthToken(): string | null {
-  return authToken;
-}
-
 /** La sesión registra aquí qué hacer si el servidor responde 401 a una petición autenticada. */
 export function setUnauthorizedHandler(fn: (() => void) | null): void {
   onUnauthorized = fn;
@@ -86,7 +82,9 @@ export async function request<T>(
   const ownToken = opts.token !== undefined;
   const useAuth = opts.auth !== false && !ownToken;
   const headers = new Headers({ Accept: 'application/json' });
-  if (opts.body !== undefined) headers.set('Content-Type', 'application/json');
+  // FormData (subida de fotos): el navegador pone el Content-Type multipart con su separador.
+  const isForm = typeof FormData !== 'undefined' && opts.body instanceof FormData;
+  if (opts.body !== undefined && !isForm) headers.set('Content-Type', 'application/json');
   if (useAuth && authToken) headers.set('Authorization', `Bearer ${authToken}`);
   if (ownToken && opts.token) headers.set('Authorization', `Bearer ${opts.token}`);
 
@@ -95,7 +93,7 @@ export async function request<T>(
     res = await fetch(buildUrl(path, opts.query), {
       method,
       headers,
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      body: opts.body === undefined ? undefined : isForm ? (opts.body as FormData) : JSON.stringify(opts.body),
     });
   } catch {
     throw new ApiError(0, 'No se pudo conectar con el servidor. Verifique que el backend esté encendido.');

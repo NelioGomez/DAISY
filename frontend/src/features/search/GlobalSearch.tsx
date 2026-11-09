@@ -1,10 +1,10 @@
 /* Búsqueda global (mejora n.° 7): Ctrl + K desde cualquier pantalla del sistema interno.
-   Busca en los módulos que el rol puede leer y abre el registro sin cambiar de pantalla
-   (documentos y productos) o lleva a su módulo (clientes, proveedores, OPI). */
+   Busca en los módulos que el rol puede leer y abre el registro en el panel lateral sin cambiar
+   de pantalla (documentos, órdenes de servicio, productos, clientes y proveedores). */
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { EstadoTag } from '../../components/tables/Tag';
 import { useModal } from '../../components/modals/useModal';
+import { ProductImage } from '../../components/common/ProductImage';
 import { api, errorMessage } from '../../services/api/client';
 import {
   INQUIRY_STATUS,
@@ -20,8 +20,7 @@ import {
 } from '../../services/api/mappers';
 import { money } from '../../utils/format';
 import { useOpenDocument } from '../documents/useOpenDocument';
-import { CustomerDrawer } from '../customers/CustomerDrawer';
-import { ProductDrawer } from '../products/ProductDrawer';
+import { useRecords } from '../records/records';
 
 type Tipo = 'PRODUCT' | 'CUSTOMER' | 'SUPPLIER' | 'SALE' | 'QUOTATION' | 'INQUIRY' | 'PURCHASE' | 'SERVICE_ORDER' | 'PRODUCTION_ORDER' | 'PRODUCTION_LOT';
 
@@ -33,6 +32,7 @@ interface Hit {
   detalle: string;
   estado: string | null;
   monto: number | null;
+  imagen: string | null;
 }
 
 const GROUPS: Array<[Tipo, string]> = [
@@ -65,6 +65,7 @@ function estado(tipo: Tipo, s: any): string | null {
 }
 
 const toHit = (r: any): Hit => ({
+  imagen: r.imageUrl ?? null,
   tipo: r.type,
   id: String(r.id),
   codigo: r.code ?? '',
@@ -78,7 +79,7 @@ type State = { q: string; hits: Hit[] } | { q: string; error: string };
 
 export function GlobalSearch() {
   const modal = useModal();
-  const navigate = useNavigate();
+  const { openRecord } = useRecords();
   const { open: openDoc } = useOpenDocument();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
@@ -118,15 +119,13 @@ export function GlobalSearch() {
       case 'PURCHASE':
         return openDoc({ tipo: 'COMPRA', id: h.id, codigo: h.codigo });
       case 'PRODUCT':
-        return modal.open(<ProductDrawer productoId={h.id} />);
+        return openRecord('producto', h.id);
       case 'CUSTOMER':
-        return modal.open(<CustomerDrawer clienteId={h.id} />);
+        return openRecord('cliente', h.id);
       case 'SUPPLIER':
-        modal.close();
-        return navigate('/app/proveedores');
+        return openRecord('proveedor', h.id);
       case 'SERVICE_ORDER':
-        modal.close();
-        return navigate('/app/ordenes');
+        return openDoc({ tipo: 'SERVICIO', id: h.id, codigo: h.codigo });
       case 'PRODUCTION_ORDER':
         return openDoc({ tipo: 'PRODUCCION', id: h.id, codigo: h.codigo });
       case 'PRODUCTION_LOT':
@@ -207,6 +206,7 @@ export function GlobalSearch() {
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(h)}
                   >
+                    {h.tipo === 'PRODUCT' && <ProductImage src={h.imagen} size={30} />}
                     {h.codigo && <span className="mono code">{h.codigo}</span>}
                     <span className="main">
                       <b>{h.titulo}</b>
