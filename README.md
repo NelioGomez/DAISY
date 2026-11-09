@@ -435,6 +435,55 @@ público y en el login. La preferencia se guarda en el navegador (`siven.tema`) 
 de pintar. Los colores de las hojas de estilo son tokens (`--card`, `--line`, `--amber-tint`, `--green-ink`…):
 el modo oscuro solo redefine sus valores en `:root[data-theme="dark"]`. Al imprimir se usan los colores claros.
 
+## Documentación: manual de usuario (mejora 64)
+
+Opción **Documentación** del menú (`/app/documentacion`), visible para todos los roles. No necesita migración
+ni cambios en el backend. Es el manual de usuario completo, en lenguaje sencillo y con capturas del sistema:
+25 capítulos agrupados como el menú (primeros pasos, cada módulo interno, sitio web, portal de clientes,
+preguntas frecuentes y glosario). Tiene índice, búsqueda sin tildes en todo el manual, "En este capítulo",
+anterior / siguiente, imágenes que se amplían con un clic y descarga en PDF del capítulo o del manual
+completo (con portada y contenido), generada en el navegador con `pdfmake` (se carga solo al descargar). Los capítulos de
+módulos que el rol no abre se marcan con un candado, pero se pueden leer. El botón **?** de la barra superior
+abre el capítulo de la pantalla en que se está, y la dirección lleva el capítulo y la sección
+(`/app/documentacion?cap=ordenes#facturar-la-orden`), así que se puede compartir.
+
+Para corregir o ampliar el manual no hay que tocar código:
+
+- Cada capítulo es un archivo Markdown en `frontend/src/features/docs/manual/` (`NN-id.md`; el número da el
+  orden). La cabecera lleva `id` (el del módulo, para que funcione el botón de ayuda), `titulo`, `grupo`,
+  `modulo` (para saber qué roles lo usan; vacío si no es un módulo) y `resumen`.
+- Las imágenes van en `frontend/public/manual/` (WebP) y se citan como `![pie de imagen](/manual/nombre.webp)`
+  en una línea propia. `frontend/src/features/docs/imagenes.ts` guarda su tamaño para que la página no salte
+  mientras cargan; una imagen nueva que no esté ahí se muestra igual.
+- Se admite: `##` y `###`, párrafos, listas (`-` y `1.`, con viñetas sangradas debajo de un paso), tablas,
+  `---`, **negrita**, *cursiva*, `código`, teclas `[[Ctrl + K]]`, íconos del menú `:ic-wallet:`, avisos
+  `> **Nota:**`, `> **Importante:**` y `> **Consejo:**`, y enlaces a otro capítulo o sección
+  (`[texto](?cap=pagos#registrar-un-pago)`).
+
+## Despliegue en SmarterASP.NET (un solo sitio)
+
+En producción la API de NestJS sirve también el frontend: si existe la carpeta `public` (o `FRONTEND_DIR`)
+con el `index.html` compilado, la API la publica y devuelve `index.html` en las rutas de React Router. Así
+todo queda en un mismo dominio (sin CORS ni proxy) y el WebSocket usa el mismo sitio. En desarrollo no hay
+carpeta `public` y todo sigue igual (Vite en 5173). La API confía en el proxy local (`trust proxy`) para
+registrar la IP real del cliente detrás de IIS.
+
+1. **Base de datos.** Con la base PostgreSQL de SmarterASP creada, desde `backend` en su PC (con
+   `DATABASE_URL` apuntando a esa base) revise que tenga todas las migraciones:
+   `npx prisma migrate status` y, si faltan, `npx prisma migrate deploy`. Si la base está vacía, después
+   `npx prisma db seed`.
+2. **Claves.** Copie `deploy/web.config.ejemplo` como `deploy/web.config` y cambie los valores `CAMBIAR`
+   (conexión, `JWT_SECRET` nuevo, correo). `deploy/web.config` no se sube a GitHub (.gitignore).
+3. **Paquete.** Desde la raíz, en PowerShell: `powershell -ExecutionPolicy Bypass -File deploy\preparar-despliegue.ps1`.
+   Compila frontend y backend y deja `deploy\salida` y `deploy\siven-sitio.zip` (dist, public, uploads,
+   logs, web.config y node_modules de producción).
+4. **Subir.** En el panel, *Archivos* (o FTP): suba `siven-sitio.zip` a la carpeta del sitio, descomprímalo
+   ahí y dé permiso de **escritura** a `uploads` y `logs`. Encienda el sitio.
+5. **Probar.** Abra la dirección del sitio. Si sale un error 502/500, revise `logs\node*.log`.
+
+El servidor necesita Node 22 o superior (`processPath` en `web.config`); si tiene uno más viejo, suba Node
+portátil para Windows dentro del sitio y ponga la ruta completa a `node.exe`.
+
 ## Inventario (Fase 9)
 
 | Método | Ruta | Permiso |
